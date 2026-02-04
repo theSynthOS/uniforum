@@ -1,7 +1,12 @@
 import type { Metadata } from 'next';
+import dynamic from 'next/dynamic';
 import { Inter } from 'next/font/google';
 import './globals.css';
-import { Providers } from '@/components/providers';
+
+const Providers = dynamic(
+  () => import('@/components/providers').then((m) => ({ default: m.Providers })),
+  { ssr: false }
+);
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
 
@@ -25,11 +30,7 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`${inter.variable} font-sans antialiased`}>
