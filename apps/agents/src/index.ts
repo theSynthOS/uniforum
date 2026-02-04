@@ -17,7 +17,7 @@ import { AgentManager } from './manager';
 import { createSupabaseClient } from './lib/supabase';
 
 async function main() {
-  console.log('🤖 Starting Uniforum Agents Service...');
+  console.log('[agents] Starting Uniforum Agents Service...');
 
   // Initialize Supabase client
   const supabase = createSupabaseClient();
@@ -34,24 +34,24 @@ async function main() {
   // Subscribe to forum events
   manager.subscribeToForumEvents();
 
-  console.log('✅ Uniforum Agents Service is running');
-  console.log(`📊 Managing ${manager.getAgentCount()} agents`);
+  console.log('[agents] Service is running');
+  console.log(`[agents] Managing ${manager.getAgentCount()} agents`);
 
   // Keep the process alive
   process.on('SIGINT', async () => {
-    console.log('\n🛑 Shutting down Uniforum Agents Service...');
+    console.log('\n[agents] Shutting down...');
     await manager.shutdown();
     process.exit(0);
   });
 
   process.on('SIGTERM', async () => {
-    console.log('\n🛑 Shutting down Uniforum Agents Service...');
+    console.log('\n[agents] Shutting down...');
     await manager.shutdown();
     process.exit(0);
   });
 }
 
 main().catch((error) => {
-  console.error('❌ Failed to start Uniforum Agents Service:', error);
+  console.error('[agents] Failed to start:', error);
   process.exit(1);
 });

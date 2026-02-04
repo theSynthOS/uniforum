@@ -22,7 +22,7 @@ export class AgentManager {
    * Load all active agents from the database
    */
   async loadAgents(): Promise<void> {
-    console.log('📥 Loading agents from database...');
+    console.log('[agents] Loading agents from database...');
 
     const { data: agents, error } = await this.supabase
       .from('agents')
@@ -34,7 +34,7 @@ export class AgentManager {
     }
 
     if (!agents || agents.length === 0) {
-      console.log('ℹ️  No agents found in database');
+      console.log('[agents] No agents found in database');
       return;
     }
 
@@ -42,7 +42,7 @@ export class AgentManager {
       await this.createAgentInstance(agent);
     }
 
-    console.log(`✅ Loaded ${agents.length} agents`);
+    console.log(`[agents] Loaded ${agents.length} agents`);
   }
 
   /**
@@ -52,11 +52,11 @@ export class AgentManager {
     const ensName = agentData.full_ens_name;
 
     if (this.agents.has(ensName)) {
-      console.log(`⚠️  Agent ${ensName} already exists, skipping`);
+      console.log(`[agents] Agent ${ensName} already exists, skipping`);
       return;
     }
 
-    console.log(`🤖 Creating agent instance: ${ensName}`);
+    console.log(`[agents] Creating agent instance: ${ensName}`);
 
     // Create character config from database data
     const character = createAgentCharacter({
@@ -82,14 +82,14 @@ export class AgentManager {
     };
 
     this.agents.set(ensName, instance);
-    console.log(`✅ Agent ${ensName} created`);
+    console.log(`[agents] Agent ${ensName} created`);
   }
 
   /**
    * Subscribe to new agent registrations via Supabase realtime
    */
   subscribeToNewAgents(): void {
-    console.log('📡 Subscribing to new agent registrations...');
+    console.log('[agents] Subscribing to new agent registrations...');
 
     this.supabase
       .channel('agents-changes')
@@ -101,7 +101,7 @@ export class AgentManager {
           table: 'agents',
         },
         async (payload) => {
-          console.log(`🆕 New agent registered: ${payload.new.ens_name}`);
+          console.log(`[agents] New agent registered: ${payload.new.ens_name}`);
           // Fetch full agent data with wallet
           const { data: agent } = await this.supabase
             .from('agents')
@@ -121,7 +121,7 @@ export class AgentManager {
    * Subscribe to forum events for agent participation
    */
   subscribeToForumEvents(): void {
-    console.log('📡 Subscribing to forum events...');
+    console.log('[agents] Subscribing to forum events...');
 
     // Subscribe to new messages in forums
     this.supabase
@@ -179,7 +179,7 @@ export class AgentManager {
       const agent = this.agents.get(ensName);
       if (agent) {
         // TODO: Have agent evaluate and potentially respond
-        console.log(`📨 Agent ${ensName} received message in forum`);
+        console.log(`[agents] ${ensName} received message in forum`);
       }
     }
   }
@@ -204,7 +204,7 @@ export class AgentManager {
       const agent = this.agents.get(ensName);
       if (agent) {
         // TODO: Have agent evaluate proposal and vote
-        console.log(`🗳️  Agent ${ensName} evaluating proposal`);
+        console.log(`[agents] ${ensName} evaluating proposal`);
       }
     }
   }
@@ -227,10 +227,10 @@ export class AgentManager {
    * Shutdown all agents gracefully
    */
   async shutdown(): Promise<void> {
-    console.log('🛑 Shutting down all agents...');
+    console.log('[agents] Shutting down all agents...');
 
     for (const [ensName, agent] of this.agents) {
-      console.log(`  Stopping ${ensName}...`);
+      console.log(`[agents] Stopping ${ensName}...`);
       // TODO: Gracefully stop Eliza runtime
       // if (agent.runtime) {
       //   await agent.runtime.stop();
@@ -238,6 +238,6 @@ export class AgentManager {
     }
 
     this.agents.clear();
-    console.log('✅ All agents stopped');
+    console.log('[agents] All agents stopped');
   }
 }
