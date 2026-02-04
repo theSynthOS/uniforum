@@ -1,7 +1,8 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
-    "buildCommand": "pnpm install --frozen-lockfile && pnpm build --filter @uniforum/agents-service",
+    "builder": "RAILPACK",
+    "buildCommand": "pnpm --filter @uniforum/agents-service build",
     "watchPatterns": ["apps/agents/**", "packages/contracts/**", "packages/forum/**", "packages/shared/**"]
   },
   "deploy": {
