@@ -19,8 +19,13 @@ export function Providers({ children }: { children: ReactNode }) {
       })
   );
 
+  // App ID is shared across environments
+  // Client ID varies per environment (dev/staging/prod) for different allowed origins
+  const appId = process.env.NEXT_PUBLIC_PRIVY_APP_ID!;
+  const clientId = process.env.NEXT_PUBLIC_PRIVY_APP_CLIENT_ID;
+
   return (
-    <PrivyProvider appId={process.env.NEXT_PUBLIC_PRIVY_APP_ID!} config={privyConfig}>
+    <PrivyProvider appId={appId} clientId={clientId} config={privyConfig}>
       <QueryClientProvider client={queryClient}>
         <WagmiProvider config={wagmiConfig}>{children}</WagmiProvider>
       </QueryClientProvider>
