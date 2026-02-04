@@ -7,7 +7,9 @@ function normalizeSupabaseUrl(url: string): string {
   const trimmed = url.trim();
   if (!trimmed) return url;
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  return `https://${trimmed}`;
+  // Railway internal URLs use http (no TLS needed for internal traffic)
+  const isRailwayInternal = trimmed.includes('.railway.internal');
+  return isRailwayInternal ? `http://${trimmed}` : `https://${trimmed}`;
 }
 
 export function getSupabase(): SupabaseClient {
