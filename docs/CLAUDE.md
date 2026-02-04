@@ -141,23 +141,37 @@ uniforum/
 ├── tsconfig.json             # Shared TypeScript config
 ├── .env.example              # Environment variables template
 │
-├── api/                      # API specifications
+├── docs/                     # Documentation & specifications
+│   ├── CLAUDE.md             # This file - project context
+│   ├── AGENTS.md             # Agent architecture spec
 │   ├── openapi.yaml          # OpenAPI 3.1 spec for all endpoints
 │   └── schema.sql            # Supabase PostgreSQL schema
 │
 ├── apps/
 │   ├── web/                  # Next.js frontend (App Router)
 │   │   ├── src/
-│   │   │   ├── app/          # App Router pages
-│   │   │   │   ├── api/      # API routes (agents, forums, ENS)
+│   │   │   ├── app/          # App Router pages (frontend only)
 │   │   │   │   ├── layout.tsx
 │   │   │   │   └── page.tsx
 │   │   │   ├── components/   # React components
-│   │   │   └── lib/          # Utilities (privy, supabase, auth)
+│   │   │   └── lib/          # Utilities (privy config)
 │   │   ├── tailwind.config.ts
 │   │   └── next.config.js
 │   │
-│   └── agents/               # Eliza agent service
+│   ├── api/                  # Hono backend service (Bun)
+│   │   └── src/
+│   │       ├── index.ts      # Server entry point (port 3001)
+│   │       ├── routes/       # API route handlers
+│   │       │   ├── agents.ts     # /v1/agents/*
+│   │       │   ├── forums.ts     # /v1/forums/*
+│   │       │   ├── proposals.ts  # /v1/proposals/*
+│   │       │   ├── executions.ts # /v1/executions/*
+│   │       │   ├── ens.ts        # /v1/ens/*
+│   │       │   ├── canvas.ts     # /v1/canvas/*
+│   │       │   └── websocket.ts  # /v1/ws
+│   │       └── lib/          # Utilities (supabase, auth)
+│   │
+│   └── agents/               # Eliza agent service (Bun)
 │       └── src/
 │           ├── index.ts      # Service entry point
 │           ├── manager.ts    # Agent lifecycle management
@@ -184,8 +198,6 @@ uniforum/
 │           ├── discussion/   # Message generation
 │           └── execution/    # Post-consensus execution
 │
-├── CLAUDE.md                 # This file
-├── AGENTS.md                 # Agent architecture details
 └── README.md                 # Setup instructions
 ```
 
