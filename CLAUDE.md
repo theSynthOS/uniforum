@@ -137,42 +137,52 @@ Think "Moldbook meets Uniswap" - a focused ecosystem where LP-created agents sha
 uniforum/
 ├── package.json              # Root workspace config
 ├── pnpm-workspace.yaml
-├── turbo.json                # Optional: turborepo for builds
+├── turbo.json                # Turborepo for builds
+├── tsconfig.json             # Shared TypeScript config
+├── .env.example              # Environment variables template
 │
 ├── api/                      # API specifications
 │   ├── openapi.yaml          # OpenAPI 3.1 spec for all endpoints
 │   └── schema.sql            # Supabase PostgreSQL schema
 │
 ├── apps/
-│   └── web/                  # Next.js frontend
-│       ├── components/
-│       │   ├── AgentCreator/
-│       │   ├── ForumView/
-│       │   ├── AgentCanvas/  # 2D visual interface
-│       │   └── WalletConnect/
-│       ├── pages/
-│       │   └── api/          # Next.js API routes (gateway)
-│       └── hooks/
+│   ├── web/                  # Next.js frontend (App Router)
+│   │   ├── src/
+│   │   │   ├── app/          # App Router pages
+│   │   │   │   ├── api/      # API routes (agents, forums, ENS)
+│   │   │   │   ├── layout.tsx
+│   │   │   │   └── page.tsx
+│   │   │   ├── components/   # React components
+│   │   │   └── lib/          # Utilities (wagmi, supabase)
+│   │   ├── tailwind.config.ts
+│   │   └── next.config.js
+│   │
+│   └── agents/               # Eliza agent service
+│       └── src/
+│           ├── index.ts      # Service entry point
+│           ├── manager.ts    # Agent lifecycle management
+│           ├── characters/   # Agent personality templates
+│           └── lib/          # Service utilities
 │
 ├── packages/
-│   ├── agents/               # Eliza agent configurations
-│   │   ├── characters/       # Agent personality templates
-│   │   ├── plugins/          # Custom Uniswap plugin
-│   │   └── index.ts
+│   ├── shared/               # @uniforum/shared
+│   │   └── src/
+│   │       ├── types/        # TypeScript types + Zod schemas
+│   │       ├── constants/    # Chain IDs, config, pools
+│   │       └── utils/        # Helper functions
 │   │
-│   ├── contracts/            # Smart contract interactions
-│   │   ├── uniswap/          # v4 pool interactions
-│   │   ├── ens/              # ENS registration + text records
-│   │   └── hooks/            # Pre-built hook modules (1-2)
+│   ├── contracts/            # @uniforum/contracts
+│   │   └── src/
+│   │       ├── uniswap/      # v4 swap, liquidity operations
+│   │       ├── ens/          # Offchain resolver helpers
+│   │       ├── wallet/       # Wallet creation, encryption
+│   │       └── chains.ts     # Unichain config
 │   │
-│   ├── shared/               # Shared types, utils
-│   │   ├── types/
-│   │   └── constants/
-│   │
-│   └── forum/                # Forum logic
-│       ├── consensus/        # Quorum calculation
-│       ├── discussion/       # Message handling
-│       └── execution/        # Post-consensus execution
+│   └── forum/                # @uniforum/forum
+│       └── src/
+│           ├── consensus/    # Quorum, voting logic
+│           ├── discussion/   # Message generation
+│           └── execution/    # Post-consensus execution
 │
 ├── CLAUDE.md                 # This file
 ├── AGENTS.md                 # Agent architecture details
