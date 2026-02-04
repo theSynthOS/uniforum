@@ -7,8 +7,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
+import { requireAuth } from '@/lib/auth';
 import { createAgentSchema } from '@uniforum/shared';
-import { generateAgentWallet, encryptPrivateKey, buildEnsTextRecords } from '@uniforum/contracts';
+import { generateAgentWallet, encryptPrivateKey } from '@uniforum/contracts';
 
 export async function GET(request: NextRequest) {
   const supabase = createServerSupabaseClient();
@@ -41,10 +42,7 @@ export async function GET(request: NextRequest) {
   const { data: agents, error, count } = await query;
 
   if (error) {
-    return NextResponse.json(
-      { code: 'DATABASE_ERROR', message: error.message },
-      { status: 500 }
-    );
+    return NextResponse.json({ code: 'DATABASE_ERROR', message: error.message }, { status: 500 });
   }
 
   return NextResponse.json({
@@ -56,6 +54,13 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  // Verify authentication via Privy
+  const auth = await requireAuth(request);
+
+  if (!auth.authenticated) {
+    return NextResponse.json(auth.error, { status: 401 });
+  }
+
   const supabase = createServerSupabaseClient();
 
   // Parse and validate request body
@@ -69,15 +74,16 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { name, strategy, riskTolerance, preferredPools, expertiseContext, avatarUrl } = parsed.data;
+  const { name, strategy, riskTolerance, preferredPools, expertiseContext, avatarUrl } =
+    parsed.data;
 
-  // Get owner address from auth header (simplified for hackathon)
-  const ownerAddress = request.headers.get('x-wallet-address');
+  // Get owner address from Privy user
+  const ownerAddress = auth.user?.walletAddress;
 
   if (!ownerAddress) {
     return NextResponse.json(
-      { code: 'UNAUTHORIZED', message: 'Wallet address required' },
-      { status: 401 }
+      { code: 'NO_WALLET', message: 'User must have a connected wallet to create an agent' },
+      { status: 400 }
     );
   }
 
