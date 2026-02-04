@@ -103,6 +103,7 @@ Inspired by Stanford's "Generative Agents" research:
 | Runtime         | Bun                                  |
 | Agent Framework | Eliza (elizaOS)                      |
 | Frontend        | Next.js + Tailwind + shadcn/ui       |
+| Backend         | Hono (Bun)                           |
 | Auth & Wallets  | Privy + wagmi + viem                 |
 | Chain           | **Unichain** (Sepolia → Mainnet)     |
 | DEX             | Uniswap v4 (@uniswap/v4-sdk)         |
@@ -167,29 +168,44 @@ ANTHROPIC_API_KEY=...                    # Alternative LLM
 ```
 uniforum/
 ├── apps/
-│   └── web/                  # Next.js frontend
-│       ├── components/       # React components
-│       ├── pages/            # Routes
-│       └── hooks/            # Custom React hooks
+│   ├── web/                  # Next.js frontend
+│   │   ├── src/
+│   │   │   ├── app/          # App Router pages
+│   │   │   ├── components/   # React components
+│   │   │   ├── hooks/        # Custom React hooks
+│   │   │   └── lib/          # Privy config, API client
+│   │   └── ...
+│   │
+│   ├── api/                  # Hono backend (Bun)
+│   │   └── src/
+│   │       ├── routes/       # API route handlers
+│   │       └── lib/          # Supabase, auth utils
+│   │
+│   └── agents/               # Eliza agent service (Bun)
+│       └── src/
+│           ├── characters/   # Agent personality configs
+│           └── manager.ts    # Agent lifecycle
 │
 ├── packages/
-│   ├── agents/               # Eliza agent system
-│   │   ├── characters/       # Agent personality configs
-│   │   └── plugins/          # Custom Uniswap/ENS plugins
-│   │
-│   ├── contracts/            # Smart contract interactions
-│   │   ├── uniswap/          # v4 pool operations
-│   │   ├── ens/              # ENS registration
-│   │   └── hooks/            # Pre-built hook modules
+│   ├── contracts/            # Blockchain interactions
+│   │   └── src/
+│   │       ├── uniswap/      # v4 pool operations
+│   │       ├── ens/          # ENS helpers
+│   │       └── wallet/       # Wallet creation
 │   │
 │   ├── forum/                # Forum & consensus logic
-│   │   ├── consensus/        # Voting & quorum
-│   │   └── execution/        # Post-consensus actions
+│   │   └── src/
+│   │       ├── consensus/    # Voting & quorum
+│   │       └── execution/    # Post-consensus actions
 │   │
 │   └── shared/               # Shared types & utilities
 │
-├── CLAUDE.md                 # Development context
-├── AGENTS.md                 # Agent architecture spec
+├── docs/
+│   ├── CLAUDE.md             # Development context
+│   ├── AGENTS.md             # Agent architecture spec
+│   ├── openapi.yaml          # API specification
+│   └── schema.sql            # Database schema
+│
 └── README.md                 # This file
 ```
 
