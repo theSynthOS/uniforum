@@ -1,20 +1,48 @@
-import { createClient } from '@supabase/supabase-js';
+/**
+ * Supabase Client (Server-side only)
+ *
+ * All Supabase calls go through API routes.
+ * No client-side Supabase access - keeps credentials secure.
+ */
+
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@uniforum/shared/types/database';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+let supabaseInstance: SupabaseClient<Database> | null = null;
 
-// Client-side Supabase client (uses anon key)
-export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey);
+/**
+ * Create a server-side Supabase client
+ * Only use this in API routes, never on the client
+ */
+export function createServerSupabaseClient(): SupabaseClient<Database> {
+  // Return cached instance if available
+  if (supabaseInstance) {
+    return supabaseInstance;
+  }
 
-// Server-side Supabase client (uses service role key)
-// Only use this in API routes, never expose to client
-export function createServerSupabaseClient() {
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  return createClient<Database>(supabaseUrl, supabaseServiceKey, {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error(
+      'Missing Supabase environment variables. ' +
+        'Ensure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set.'
+    );
+  }
+
+  supabaseInstance = createClient<Database>(supabaseUrl, supabaseKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
     },
   });
+
+  return supabaseInstance;
+}
+
+/**
+ * Helper to check if we're running on the server
+ */
+export function isServer(): boolean {
+  return typeof window === 'undefined';
 }
