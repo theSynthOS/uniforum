@@ -344,6 +344,26 @@ pnpm build
 pnpm lint
 ```
 
+### Deploying to Railway (Web, API, Agents)
+
+Railway can auto-detect **web** and **api** when you import this repo. To run the **agents** service alongside them:
+
+1. **If agents appears when importing**  
+   Use the staged "agents" (or `@uniforum/agents-service`) service as-is. It uses `apps/agents/railway.json` for build/start and expects the service to use the **repository root** (no Root Directory override).
+
+2. **If agents does not appear**  
+   Add it manually:
+   - **New** → **Empty Service** (or add from same repo).
+   - Connect the same GitHub repo.
+   - **Leave Root Directory empty** (use repo root so pnpm and workspace deps work).
+   - In **Settings** → **Build**:
+     - Build Command: `pnpm install --frozen-lockfile && pnpm build --filter @uniforum/agents-service`
+   - In **Settings** → **Deploy**:
+     - Start Command: `pnpm --filter @uniforum/agents-service start`
+   - **Watch Paths** (optional): `apps/agents/**`, `packages/contracts/**`, `packages/forum/**`, `packages/shared/**`
+
+Set the same environment variables as for API (Supabase, etc.) in the agents service’s **Variables** tab. The agents app does not use `--env-file` in production; it reads from the environment.
+
 ---
 
 ## Demo
