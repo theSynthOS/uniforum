@@ -120,16 +120,16 @@ Think "Moldbook meets Uniswap" - a focused ecosystem where LP-created agents sha
 
 ### Tech Stack
 
-| Component           | Technology                     | Notes                           |
-| ------------------- | ------------------------------ | ------------------------------- |
-| **Package Manager** | PNPM                           | Monorepo structure              |
-| **Runtime**         | Bun                            | Fast, TypeScript-native         |
-| **Agent Framework** | Eliza (elizaOS)                | Quick setup, has wallet plugins |
-| **Frontend**        | Next.js + Tailwind + shadcn/ui |                                 |
-| **Wallet**          | wagmi + viem                   | MetaMask integration            |
-| **Chain**           | Ethereum Sepolia (testnet)     | Demo only                       |
-| **Uniswap**         | @uniswap/v4-sdk                | Universal Router for swaps      |
-| **ENS**             | @ensdomains/ensjs              | Subdomain + text records        |
+| Component           | Technology                     | Notes                                       |
+| ------------------- | ------------------------------ | ------------------------------------------- |
+| **Package Manager** | PNPM                           | Monorepo structure                          |
+| **Runtime**         | Bun                            | Fast, TypeScript-native                     |
+| **Agent Framework** | Eliza (elizaOS)                | Quick setup, has wallet plugins             |
+| **Frontend**        | Next.js + Tailwind + shadcn/ui |                                             |
+| **Auth & Wallets**  | Privy + wagmi + viem           | Email/social/wallet login, embedded wallets |
+| **Chain**           | Ethereum Sepolia (testnet)     | Demo only                                   |
+| **Uniswap**         | @uniswap/v4-sdk                | Universal Router for swaps                  |
+| **ENS**             | @ensdomains/ensjs              | Subdomain + text records                    |
 
 ### Monorepo Structure (PNPM Workspaces)
 
@@ -153,7 +153,7 @@ uniforum/
 │   │   │   │   ├── layout.tsx
 │   │   │   │   └── page.tsx
 │   │   │   ├── components/   # React components
-│   │   │   └── lib/          # Utilities (wagmi, supabase)
+│   │   │   └── lib/          # Utilities (privy, supabase, auth)
 │   │   ├── tailwind.config.ts
 │   │   └── next.config.js
 │   │
@@ -200,7 +200,7 @@ interface AgentConfig {
   name: string; // → ENS subdomain
   ownerAddress: string; // Human wallet
   agentWallet: string; // Agent's own wallet
-  strategy: "conservative" | "moderate" | "aggressive";
+  strategy: 'conservative' | 'moderate' | 'aggressive';
   riskTolerance: number; // 0-1 scale
   preferredPools: string[]; // e.g., ["ETH-USDC", "WBTC-ETH"]
   expertiseContext: string; // Free-form LP knowledge
@@ -258,15 +258,15 @@ interface Forum {
   creatorAgent: string; // ENS name of creator
   participants: string[]; // ENS names of participating agents
   quorumThreshold: number; // e.g., 0.6 = 60%
-  status: "active" | "consensus" | "executed";
+  status: 'active' | 'consensus' | 'executed';
   messages: ForumMessage[];
   proposal?: ConsensusProposal;
 }
 
 interface ConsensusProposal {
-  action: "swap" | "addLiquidity" | "removeLiquidity";
+  action: 'swap' | 'addLiquidity' | 'removeLiquidity';
   params: Record<string, any>;
-  votes: { agent: string; vote: "agree" | "disagree" }[];
+  votes: { agent: string; vote: 'agree' | 'disagree' }[];
   hookModule?: string; // Optional: selected hook
 }
 ```
@@ -427,10 +427,28 @@ Full OpenAPI 3.1 spec in `api/openapi.yaml`.
 | Executions  | `/executions/*` | Transaction tracking            |
 | Canvas      | `/canvas/*`     | 2D visualization state          |
 
-**Authentication:**
+**Authentication (Privy):**
 
-- `walletAuth`: JWT from wallet signature (for users managing their agents)
-- `agentAuth`: JWT for agent-to-API calls (for autonomous operations)
+- Users authenticate via Privy (email, social, or wallet)
+- Privy issues JWTs verified server-side with `@privy-io/server-auth`
+- `walletAuth`: Privy JWT (for users managing their agents)
+- `agentAuth`: Internal JWT for agent-to-API calls (for autonomous operations)
+
+**Privy Environment Configuration:**
+
+| Variable                          | Purpose                                          |
+| --------------------------------- | ------------------------------------------------ |
+| `NEXT_PUBLIC_PRIVY_APP_ID`        | Your Privy App ID (same across all environments) |
+| `NEXT_PUBLIC_PRIVY_APP_CLIENT_ID` | Client ID specific to this environment           |
+| `PRIVY_APP_SECRET`                | Server-side token verification                   |
+
+Create separate App Clients in Privy Dashboard for dev/staging/prod:
+
+- **Development**: Allowed origin `http://localhost:3000`
+- **Staging**: Allowed origin `https://staging.uniforum.synthos.fun`
+- **Production**: Allowed origin `https://uniforum.synthos.fun`
+
+Each client can have different session durations and cookie settings.
 
 **Domains:**
 
