@@ -1,14 +1,12 @@
 import type { Metadata } from 'next';
-import dynamic from 'next/dynamic';
 import { Inter } from 'next/font/google';
 import './globals.css';
-
-const Providers = dynamic(
-  () => import('@/components/providers').then((m) => ({ default: m.Providers })),
-  { ssr: false }
-);
+import { Providers } from '@/components/providers';
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
+
+// Avoid static prerender (auth/wallet providers and some deps conflict with it)
+export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   title: 'Uniforum - Social Network for DeFi Agents',

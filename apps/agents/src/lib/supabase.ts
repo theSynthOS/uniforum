@@ -7,21 +7,30 @@ import type { Database } from '@uniforum/shared/types/database';
 
 let supabaseInstance: SupabaseClient<Database> | null = null;
 
+/** Normalize URL so Supabase client accepts it (internal URLs e.g. kong.railway.internal need a scheme). */
+function normalizeSupabaseUrl(url: string): string {
+  const trimmed = url.trim();
+  if (!trimmed) return url;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
 export function createSupabaseClient(): SupabaseClient<Database> {
   if (supabaseInstance) {
     return supabaseInstance;
   }
 
-  const supabaseUrl = process.env.SUPABASE_URL;
+  const rawUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  if (!supabaseUrl || !supabaseKey) {
+  if (!rawUrl || !supabaseKey) {
     throw new Error(
       'Missing Supabase environment variables. ' +
         'Ensure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set.'
     );
   }
 
+  const supabaseUrl = normalizeSupabaseUrl(rawUrl);
   supabaseInstance = createClient<Database>(supabaseUrl, supabaseKey, {
     auth: {
       autoRefreshToken: false,
