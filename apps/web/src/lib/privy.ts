@@ -3,6 +3,17 @@
  *
  * Privy handles authentication and wallet management.
  * Users can sign in with email, social, or existing wallet.
+ *
+ * Environment Setup:
+ * - NEXT_PUBLIC_PRIVY_APP_ID: Your Privy App ID (same across all environments)
+ * - NEXT_PUBLIC_PRIVY_APP_CLIENT_ID: Client ID for this specific environment
+ *   Create separate clients for dev/staging/prod in Privy Dashboard:
+ *   Dashboard > Configuration > App settings > Clients
+ *
+ * Each client can have different:
+ * - Allowed origins (localhost:3000 for dev, uniforum.synthos.fun for prod)
+ * - Session durations
+ * - Cookie settings
  */
 
 import type { PrivyClientConfig } from '@privy-io/react-auth';
