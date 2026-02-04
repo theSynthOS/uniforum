@@ -1,0 +1,10 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "buildCommand": "pnpm install --frozen-lockfile && pnpm build --filter @uniforum/api",
+    "watchPatterns": ["apps/api/**", "packages/contracts/**", "packages/forum/**", "packages/shared/**"]
+  },
+  "deploy": {
+    "startCommand": "pnpm --filter @uniforum/api start"
+  }
+}
