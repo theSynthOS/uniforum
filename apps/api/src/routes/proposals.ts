@@ -1,0 +1,238 @@
+import { Hono } from 'hono';
+import { z } from 'zod';
+import { getSupabase } from '../lib/supabase';
+import { authMiddleware, AuthUser } from '../lib/auth';
+
+export const proposalsRoutes = new Hono<{
+  Variables: {
+    user: AuthUser;
+  };
+}>();
+
+const voteSchema = z.object({
+  agentEns: z.string(),
+  vote: z.enum(['agree', 'disagree']),
+});
+
+// GET /proposals/:proposalId - Get proposal details
+proposalsRoutes.get('/:proposalId', async (c) => {
+  const proposalId = c.req.param('proposalId');
+  const supabase = getSupabase();
+
+  const { data: proposal, error } = await supabase
+    .from('proposals')
+    .select(
+      `
+      *,
+      votes:votes(
+        id,
+        agent_ens,
+        vote,
+        created_at
+      ),
+      forum:forums(
+        id,
+        title,
+        participants,
+        quorum_threshold
+      )
+    `
+    )
+    .eq('id', proposalId)
+    .single();
+
+  if (error || !proposal) {
+    return c.json({ error: 'Proposal not found' }, 404);
+  }
+
+  // Calculate vote tallies
+  const votes = proposal.votes || [];
+  const agreeCount = votes.filter((v: { vote: string }) => v.vote === 'agree').length;
+  const disagreeCount = votes.filter((v: { vote: string }) => v.vote === 'disagree').length;
+  const totalVotes = votes.length;
+  const participantCount = proposal.forum?.participants?.length || 0;
+
+  return c.json({
+    id: proposal.id,
+    forumId: proposal.forum_id,
+    proposerEns: proposal.proposer_ens,
+    action: proposal.action,
+    params: proposal.params,
+    hooks: proposal.hooks,
+    status: proposal.status,
+    createdAt: proposal.created_at,
+    votes: votes,
+    voteTally: {
+      agree: agreeCount,
+      disagree: disagreeCount,
+      total: totalVotes,
+      participantCount,
+      percentage: totalVotes > 0 ? agreeCount / totalVotes : 0,
+      quorumMet:
+        totalVotes >= 3 &&
+        agreeCount / totalVotes >= (proposal.forum?.quorum_threshold || 0.6),
+    },
+  });
+});
+
+// POST /proposals/:proposalId/vote - Cast vote on proposal
+proposalsRoutes.post('/:proposalId/vote', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const proposalId = c.req.param('proposalId');
+  const supabase = getSupabase();
+
+  let body;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const parsed = voteSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json(
+      {
+        error: 'Validation failed',
+        details: parsed.error.flatten().fieldErrors,
+      },
+      400
+    );
+  }
+
+  const { agentEns, vote } = parsed.data;
+
+  // Verify agent ownership
+  const { data: agent } = await supabase
+    .from('agents')
+    .select('id, owner_address')
+    .eq('ens_name', agentEns)
+    .single();
+
+  if (!agent) {
+    return c.json({ error: 'Agent not found' }, 404);
+  }
+
+  if (agent.owner_address !== user.walletAddress) {
+    return c.json({ error: 'You do not own this agent' }, 403);
+  }
+
+  // Get proposal with forum info
+  const { data: proposal } = await supabase
+    .from('proposals')
+    .select(
+      `
+      *,
+      forum:forums(
+        id,
+        participants,
+        quorum_threshold
+      )
+    `
+    )
+    .eq('id', proposalId)
+    .single();
+
+  if (!proposal) {
+    return c.json({ error: 'Proposal not found' }, 404);
+  }
+
+  if (proposal.status !== 'voting') {
+    return c.json({ error: 'Voting is closed for this proposal' }, 400);
+  }
+
+  if (!proposal.forum?.participants?.includes(agentEns)) {
+    return c.json({ error: 'Agent is not a participant in this forum' }, 403);
+  }
+
+  // Check if already voted
+  const { data: existingVote } = await supabase
+    .from('votes')
+    .select('id')
+    .eq('proposal_id', proposalId)
+    .eq('agent_ens', agentEns)
+    .single();
+
+  if (existingVote) {
+    return c.json({ error: 'Agent has already voted' }, 400);
+  }
+
+  // Cast vote
+  const { data: newVote, error } = await supabase
+    .from('votes')
+    .insert({
+      proposal_id: proposalId,
+      agent_ens: agentEns,
+      vote,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('[proposals] Vote error:', error);
+    return c.json({ error: 'Failed to cast vote' }, 500);
+  }
+
+  // Increment agent's vote count
+  await supabase.rpc('increment_votes_cast', { agent_id_param: agent.id });
+
+  // Create message for the vote
+  await supabase.from('messages').insert({
+    forum_id: proposal.forum_id,
+    agent_ens: agentEns,
+    content: `Voted: ${vote}`,
+    type: 'vote',
+    metadata: { proposalId, vote },
+  });
+
+  // Check if consensus reached
+  const { data: allVotes } = await supabase
+    .from('votes')
+    .select('vote')
+    .eq('proposal_id', proposalId);
+
+  const totalVotes = allVotes?.length || 0;
+  const agreeVotes = allVotes?.filter((v) => v.vote === 'agree').length || 0;
+  const participantCount = proposal.forum?.participants?.length || 0;
+  const quorumThreshold = proposal.forum?.quorum_threshold || 0.6;
+
+  const consensusReached =
+    totalVotes >= 3 && agreeVotes / totalVotes >= quorumThreshold;
+
+  if (consensusReached) {
+    // Update proposal status
+    await supabase
+      .from('proposals')
+      .update({ status: 'approved' })
+      .eq('id', proposalId);
+
+    // Update forum status
+    await supabase
+      .from('forums')
+      .update({ status: 'consensus' })
+      .eq('id', proposal.forum_id);
+
+    // Create consensus message
+    await supabase.from('messages').insert({
+      forum_id: proposal.forum_id,
+      agent_ens: 'system',
+      content: `Consensus reached! ${agreeVotes}/${totalVotes} agents agreed (${Math.round((agreeVotes / totalVotes) * 100)}%)`,
+      type: 'result',
+    });
+  }
+
+  return c.json({
+    id: newVote.id,
+    proposalId: newVote.proposal_id,
+    agentEns: newVote.agent_ens,
+    vote: newVote.vote,
+    createdAt: newVote.created_at,
+    consensusReached,
+    voteTally: {
+      agree: agreeVotes,
+      disagree: totalVotes - agreeVotes,
+      total: totalVotes,
+      participantCount,
+      percentage: agreeVotes / totalVotes,
+    },
+  });
+});
