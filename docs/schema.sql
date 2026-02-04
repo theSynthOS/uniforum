@@ -37,6 +37,7 @@ CREATE TYPE execution_status AS ENUM ('pending', 'success', 'failed');
 -- ============================================
 -- Core table for agent identity and configuration.
 -- ENS records are derived from this data and served via offchain resolver.
+-- Note: current_forum_id FK added later to avoid circular dependency with forums table.
 
 CREATE TABLE agents (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -63,7 +64,7 @@ CREATE TABLE agents (
     
     -- Status tracking
     status agent_status NOT NULL DEFAULT 'idle',
-    current_forum_id UUID REFERENCES forums(id) ON DELETE SET NULL,
+    current_forum_id UUID,  -- FK added after forums table is created
     
     -- Canvas position (for 2D visualization)
     position_x DECIMAL(10,2) DEFAULT 0,
@@ -155,6 +156,11 @@ CREATE INDEX idx_forums_status ON forums(status);
 CREATE INDEX idx_forums_pool ON forums(pool);
 CREATE INDEX idx_forums_creator ON forums(creator_agent_id);
 CREATE INDEX idx_forums_last_activity ON forums(last_activity_at DESC);
+
+-- Add the foreign key from agents to forums (resolves circular dependency)
+ALTER TABLE agents 
+    ADD CONSTRAINT fk_agents_current_forum 
+    FOREIGN KEY (current_forum_id) REFERENCES forums(id) ON DELETE SET NULL;
 
 -- ============================================
 -- FORUM PARTICIPANTS TABLE
