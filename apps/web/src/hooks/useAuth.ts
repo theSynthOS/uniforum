@@ -2,13 +2,13 @@
  * Auth Hook
  *
  * Unified authentication hook using Privy.
- * Provides user info, login/logout, and wallet access.
+ * Provides user info, login/logout, wallet access, and access token for API calls.
  */
 
 'use client';
 
 import { usePrivy, useWallets } from '@privy-io/react-auth';
-import { useMemo } from 'react';
+import { useMemo, useCallback } from 'react';
 
 export interface AuthUser {
   id: string;
@@ -20,12 +20,21 @@ export interface AuthUser {
   linkedAccounts: Array<{
     type: string;
     address?: string;
-    email?: string;
+    email?: string | null;
   }>;
 }
 
 export function useAuth() {
-  const { ready, authenticated, user, login, logout, linkWallet, unlinkWallet } = usePrivy();
+  const {
+    ready,
+    authenticated,
+    user,
+    login,
+    logout,
+    linkWallet,
+    unlinkWallet,
+    getAccessToken,
+  } = usePrivy();
 
   const { wallets } = useWallets();
 
@@ -59,6 +68,20 @@ export function useAuth() {
     };
   }, [user, primaryWallet]);
 
+  /**
+   * Get access token for API calls
+   * Returns null if not authenticated
+   */
+  const getToken = useCallback(async (): Promise<string | null> => {
+    if (!authenticated) return null;
+    try {
+      return await getAccessToken();
+    } catch (error) {
+      console.error('Failed to get access token:', error);
+      return null;
+    }
+  }, [authenticated, getAccessToken]);
+
   return {
     // State
     ready,
@@ -72,6 +95,9 @@ export function useAuth() {
     logout,
     linkWallet,
     unlinkWallet,
+
+    // Token for API calls
+    getToken,
 
     // Helpers
     isLoading: !ready,
