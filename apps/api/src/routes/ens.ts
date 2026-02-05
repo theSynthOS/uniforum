@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { getSupabase } from '../lib/supabase';
+import { buildEnsTextRecords, ENS_TEXT_KEYS } from '@uniforum/contracts';
 
 export const ensRoutes = new Hono();
 
@@ -36,7 +37,7 @@ ensRoutes.get('/resolve/:name', async (c) => {
     .select(
       `
       *,
-      agent_wallets (address)
+      agent_wallets (wallet_address)
     `
     )
     .eq('ens_name', ensName)
@@ -53,19 +54,19 @@ ensRoutes.get('/resolve/:name', async (c) => {
     );
   }
 
-  const walletAddress = agent.agent_wallets?.[0]?.address;
+  const walletAddress = agent.agent_wallets?.[0]?.wallet_address;
 
-  // Build text records
-  const textRecords: Record<string, string> = {
-    'eth.uniforum.version': '1.0',
-    'eth.uniforum.strategy': agent.strategy,
-    'eth.uniforum.riskTolerance': agent.risk_tolerance.toString(),
-    'eth.uniforum.preferredPools': JSON.stringify(agent.preferred_pools),
-    'eth.uniforum.expertise': agent.expertise_context || '',
-    'eth.uniforum.agentWallet': walletAddress || '',
-    'eth.uniforum.createdAt': new Date(agent.created_at).getTime().toString(),
-    'eth.uniforum.owner': agent.owner_address,
-  };
+  const textRecords: Record<string, string> = buildEnsTextRecords({
+    strategy: agent.strategy,
+    riskTolerance: agent.risk_tolerance,
+    preferredPools: agent.preferred_pools,
+    expertiseContext: agent.expertise_context || '',
+    agentWallet: walletAddress || '',
+    createdAt: new Date(agent.created_at),
+  });
+
+  textRecords['eth.uniforum.owner'] = agent.owner_address;
+  textRecords[ENS_TEXT_KEYS.AGENT_WALLET] = walletAddress || '';
 
   // Add optional records if present
   if (agent.current_forum_id) {
@@ -98,7 +99,7 @@ ensRoutes.get('/text/:name/:key', async (c) => {
     .select(
       `
       *,
-      agent_wallets (address)
+      agent_wallets (wallet_address)
     `
     )
     .eq('ens_name', ensName)
@@ -109,17 +110,18 @@ ensRoutes.get('/text/:name/:key', async (c) => {
     return c.json({ error: 'Name not found' }, 404);
   }
 
-  const walletAddress = agent.agent_wallets?.[0]?.address;
+  const walletAddress = agent.agent_wallets?.[0]?.wallet_address;
 
   // Map key to value
   const keyMap: Record<string, string | null> = {
-    'eth.uniforum.version': '1.0',
-    'eth.uniforum.strategy': agent.strategy,
-    'eth.uniforum.riskTolerance': agent.risk_tolerance.toString(),
-    'eth.uniforum.preferredPools': JSON.stringify(agent.preferred_pools),
-    'eth.uniforum.expertise': agent.expertise_context,
-    'eth.uniforum.agentWallet': walletAddress,
-    'eth.uniforum.createdAt': new Date(agent.created_at).getTime().toString(),
+    ...buildEnsTextRecords({
+      strategy: agent.strategy,
+      riskTolerance: agent.risk_tolerance,
+      preferredPools: agent.preferred_pools,
+      expertiseContext: agent.expertise_context || '',
+      agentWallet: walletAddress || '',
+      createdAt: new Date(agent.created_at),
+    }),
     'eth.uniforum.owner': agent.owner_address,
     'eth.uniforum.currentForum': agent.current_forum_id,
     // Standard ENS records
@@ -159,7 +161,7 @@ ensRoutes.get('/address/:name', async (c) => {
 
   const { data: agent, error } = await supabase
     .from('agents')
-    .select('agent_wallets (address)')
+    .select('agent_wallets (wallet_address)')
     .eq('ens_name', ensName)
     .eq('status', 'active')
     .single();
@@ -170,7 +172,7 @@ ensRoutes.get('/address/:name', async (c) => {
 
   return c.json({
     name: ensName,
-    address: agent.agent_wallets?.[0]?.address || null,
+    address: agent.agent_wallets?.[0]?.wallet_address || null,
   });
 });
 

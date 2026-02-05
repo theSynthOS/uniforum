@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getSupabase } from '../lib/supabase';
+import { ENS_CONFIG } from '@uniforum/shared';
+import { buildEnsTextRecords } from '@uniforum/contracts';
 import { authMiddleware, optionalAuthMiddleware, AuthUser } from '../lib/auth';
 
 export const agentsRoutes = new Hono<{
@@ -152,13 +154,22 @@ agentsRoutes.post('/', authMiddleware, async (c) => {
   // Create agent wallet record
   await supabase.from('agent_wallets').insert({
     agent_id: agent.id,
-    address: agentWalletAddress,
+    wallet_address: agentWalletAddress,
     // In production, encrypted_private_key would be set here
   });
 
   // Initialize metrics
   await supabase.from('agent_metrics').insert({
     agent_id: agent.id,
+  });
+
+  const ensTextRecords = buildEnsTextRecords({
+    strategy: agent.strategy,
+    riskTolerance: agent.risk_tolerance,
+    preferredPools: agent.preferred_pools,
+    expertiseContext: agent.expertise_context || '',
+    agentWallet: agentWalletAddress,
+    createdAt: new Date(agent.created_at),
   });
 
   return c.json(
@@ -172,6 +183,17 @@ agentsRoutes.post('/', authMiddleware, async (c) => {
       preferredPools: agent.preferred_pools,
       status: agent.status,
       createdAt: agent.created_at,
+      ens: {
+        name: agent.ens_name,
+        parentDomain: ENS_CONFIG.PARENT_DOMAIN,
+        gatewayUrl: ENS_CONFIG.GATEWAY_URL,
+        resolverType: 'offchain-ccip-read',
+        address: agentWalletAddress,
+        textRecords: {
+          ...ensTextRecords,
+          'eth.uniforum.owner': agent.owner_address,
+        },
+      },
     },
     201
   );
@@ -192,7 +214,7 @@ agentsRoutes.get('/:ensName', optionalAuthMiddleware, async (c) => {
     .select(
       `
       *,
-      agent_wallets (address, balance_eth, balance_usdc),
+      agent_wallets (wallet_address, balance_eth, balance_usdc),
       agent_metrics (*)
     `
     )
@@ -207,7 +229,7 @@ agentsRoutes.get('/:ensName', optionalAuthMiddleware, async (c) => {
     id: agent.id,
     ensName: agent.ens_name,
     ownerAddress: agent.owner_address,
-    agentWallet: agent.agent_wallets?.[0]?.address,
+    agentWallet: agent.agent_wallets?.[0]?.wallet_address,
     strategy: agent.strategy,
     riskTolerance: agent.risk_tolerance,
     preferredPools: agent.preferred_pools,
