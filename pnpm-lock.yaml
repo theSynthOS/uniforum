@@ -35,6 +35,9 @@ importers:
       '@elizaos/plugin-node':
         specifier: ^0.1.0
         version: 0.1.9(@google-cloud/vertexai@1.10.0(encoding@0.1.13))(@langchain/core@0.3.80(@opentelemetry/api@1.9.0)(openai@4.73.0(encoding@0.1.13)(zod@3.23.8)))(axios@1.13.4)(bufferutil@4.1.0)(canvas@2.11.2(encoding@0.1.13))(encoding@0.1.13)(onnxruntime-node@1.23.2)(puppeteer-core@19.11.1(bufferutil@4.1.0)(encoding@0.1.13)(typescript@5.9.3)(utf-8-validate@5.0.10))(puppeteer@19.11.1(bufferutil@4.1.0)(encoding@0.1.13)(typescript@5.9.3)(utf-8-validate@5.0.10))(react@18.3.1)(sswr@2.2.0(svelte@5.49.2))(svelte@5.49.2)(typescript@5.9.3)(utf-8-validate@5.0.10)(vue@3.5.27(typescript@5.9.3))(whatwg-url@14.2.0)(ws@8.18.3(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)
+      '@elizaos/plugin-openai':
+        specifier: ^0.1.0
+        version: 0.1.9(@google-cloud/vertexai@1.10.0(encoding@0.1.13))(@langchain/core@0.3.80(@opentelemetry/api@1.9.0)(openai@4.73.0(encoding@0.1.13)(zod@3.23.8)))(encoding@0.1.13)(react@18.3.1)(sswr@2.2.0(svelte@5.49.2))(svelte@5.49.2)(vue@3.5.27(typescript@5.9.3))(ws@8.18.3(bufferutil@4.1.0)(utf-8-validate@5.0.10))
       '@supabase/supabase-js':
         specifier: ^2.39.0
         version: 2.94.1(bufferutil@4.1.0)(utf-8-validate@5.0.10)
@@ -747,6 +750,9 @@ packages:
     peerDependencies:
       onnxruntime-node: 1.20.1
       whatwg-url: 7.1.0
+
+  '@elizaos/plugin-openai@0.1.9':
+    resolution: {integrity: sha512-3IYTsRYXXXXXDGkV+8BcBkAUFZLVnzw4JDKtSmw3n7Zz7U144rAfq+wd9wd5PCl46ZqR6kvxO446B8GJ2I5z1Q==}
 
   '@emnapi/core@1.8.1':
     resolution: {integrity: sha512-AvT9QFpxK0Zd8J0jopedNm+w/2fIzvtPKPjqyw9jwvBaReTTqPBk9Hixaz7KbjimP+QNz605/XnjFcDAL2pqBg==}
@@ -9441,6 +9447,35 @@ snapshots:
       - winax
       - ws
       - zod
+
+  '@elizaos/plugin-openai@0.1.9(@google-cloud/vertexai@1.10.0(encoding@0.1.13))(@langchain/core@0.3.80(@opentelemetry/api@1.9.0)(openai@4.73.0(encoding@0.1.13)(zod@3.23.8)))(encoding@0.1.13)(react@18.3.1)(sswr@2.2.0(svelte@5.49.2))(svelte@5.49.2)(vue@3.5.27(typescript@5.9.3))(ws@8.18.3(bufferutil@4.1.0)(utf-8-validate@5.0.10))':
+    dependencies:
+      '@elizaos/core': 0.1.9(@google-cloud/vertexai@1.10.0(encoding@0.1.13))(@langchain/core@0.3.80(@opentelemetry/api@1.9.0)(openai@4.73.0(encoding@0.1.13)(zod@3.23.8)))(axios@1.13.4)(encoding@0.1.13)(react@18.3.1)(sswr@2.2.0(svelte@5.49.2))(svelte@5.49.2)(vue@3.5.27(typescript@5.9.3))(ws@8.18.3(bufferutil@4.1.0)(utf-8-validate@5.0.10))
+      axios: 1.13.4
+    transitivePeerDependencies:
+      - '@google-cloud/vertexai'
+      - '@langchain/anthropic'
+      - '@langchain/aws'
+      - '@langchain/cohere'
+      - '@langchain/core'
+      - '@langchain/google-genai'
+      - '@langchain/google-vertexai'
+      - '@langchain/groq'
+      - '@langchain/mistralai'
+      - '@langchain/ollama'
+      - aws-crt
+      - cheerio
+      - debug
+      - encoding
+      - peggy
+      - react
+      - solid-js
+      - sswr
+      - supports-color
+      - svelte
+      - typeorm
+      - vue
+      - ws
 
   '@emnapi/core@1.8.1':
     dependencies:

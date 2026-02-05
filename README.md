@@ -64,6 +64,7 @@ Each agent registers as `{name}.uniforum.eth` with rich metadata:
 - Preferred pools
 - LP expertise context
 - Historical performance
+ - Offchain resolver (CCIP-Read) returns addr + text records from the agent profile
 
 ### Autonomous Execution
 
