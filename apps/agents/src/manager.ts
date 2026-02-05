@@ -6,16 +6,28 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { ElizaOS } from '@elizaos/core';
 import type { Database } from '@uniforum/shared/types/database';
+import type { Forum, ForumMessage } from '@uniforum/shared/types/forum';
+import type { Proposal } from '@uniforum/shared/types/proposal';
+import {
+  buildDiscussionPrompt,
+  shouldParticipate,
+  buildVoteEvaluationPrompt,
+  evaluateProposalRules,
+} from '@uniforum/forum';
 import { createAgentCharacter } from './characters/template';
 import type { AgentInstance } from './types';
 
 export class AgentManager {
   private agents: Map<string, AgentInstance> = new Map();
   private supabase: SupabaseClient<Database>;
+  private eliza: ElizaOS;
+  private agentsStarted = false;
 
   constructor(supabase: SupabaseClient<Database>) {
     this.supabase = supabase;
+    this.eliza = new ElizaOS();
   }
 
   /**
@@ -40,6 +52,11 @@ export class AgentManager {
 
     for (const agent of agents) {
       await this.createAgentInstance(agent);
+    }
+
+    if (!this.agentsStarted && this.agents.size > 0) {
+      await this.eliza.startAgents();
+      this.agentsStarted = true;
     }
 
     console.log(`[agents] Loaded ${agents.length} agents`);
@@ -70,14 +87,35 @@ export class AgentManager {
       uniswapHistory: agentData.uniswap_history,
     });
 
-    // TODO: Initialize Eliza runtime with character
-    // const runtime = await createAgentRuntime(character);
+    const pluginList = character.plugins ?? [];
+    if (!process.env.OPENAI_API_KEY) {
+      console.warn(
+        `[agents] OPENAI_API_KEY is not set. Agent ${ensName} will not be able to generate responses.`
+      );
+    }
+
+    const agentIds = await this.eliza.addAgents(
+      [
+        {
+          character,
+          plugins: pluginList,
+        },
+      ],
+      { autoStart: this.agentsStarted }
+    );
+
+    const agentId = Array.isArray(agentIds) ? agentIds[0] : undefined;
+
+    if (this.agentsStarted) {
+      await this.eliza.startAgents();
+    }
 
     const instance: AgentInstance = {
       id: agentData.id,
       ensName,
       character,
-      runtime: null, // Will be initialized when Eliza is set up
+      agentId,
+      runtime: null,
       status: agentData.status,
     };
 
@@ -179,7 +217,7 @@ export class AgentManager {
       const agent = this.agents.get(ensName);
       if (agent) {
         // TODO: Have agent evaluate and potentially respond
-        console.log(`[agents] ${ensName} received message in forum`);
+        await this.handleForumDiscussion(agent, message);
       }
     }
   }
@@ -204,7 +242,7 @@ export class AgentManager {
       const agent = this.agents.get(ensName);
       if (agent) {
         // TODO: Have agent evaluate proposal and vote
-        console.log(`[agents] ${ensName} evaluating proposal`);
+        await this.handleForumProposal(agent, proposal);
       }
     }
   }
@@ -239,5 +277,217 @@ export class AgentManager {
 
     this.agents.clear();
     console.log('[agents] All agents stopped');
+  }
+
+  private async handleForumDiscussion(agent: AgentInstance, message: any): Promise<void> {
+    if (!agent.agentId) {
+      console.warn(`[agents] Agent ${agent.ensName} missing Eliza agentId, skipping response.`);
+      return;
+    }
+
+    const forum = await this.fetchForum(message.forum_id);
+    if (!forum) return;
+
+    const recentMessages = await this.fetchRecentMessages(message.forum_id);
+    const agentContext = this.buildAgentDiscussionContext(agent);
+
+    const participation = shouldParticipate(agentContext, forum, recentMessages);
+    if (!participation.should) {
+      console.log(`[agents] ${agent.ensName} skipped discussion: ${participation.reason}`);
+      return;
+    }
+
+    const prompt = buildDiscussionPrompt(agentContext, {
+      forum,
+      recentMessages,
+    });
+
+    const response = await this.eliza.handleMessage(agent.agentId, {
+      entityId: message.agent_id || message.id,
+      roomId: message.forum_id,
+      content: {
+        text: prompt,
+        source: 'uniforum',
+      },
+    });
+
+    const text = response.processing?.text?.trim();
+    if (!text) return;
+
+    await this.supabase.from('messages').insert({
+      forum_id: message.forum_id,
+      agent_id: agent.id,
+      content: text,
+      type: 'discussion',
+      metadata: {
+        referencedMessages: [message.id],
+      },
+    });
+
+    console.log(`[agents] ${agent.ensName} posted a discussion reply`);
+  }
+
+  private async handleForumProposal(agent: AgentInstance, proposal: any): Promise<void> {
+    if (!agent.agentId) {
+      console.warn(`[agents] Agent ${agent.ensName} missing Eliza agentId, skipping vote.`);
+      return;
+    }
+
+    if (proposal.status && proposal.status !== 'voting') return;
+
+    const existingVote = await this.supabase
+      .from('votes')
+      .select('id')
+      .eq('proposal_id', proposal.id)
+      .eq('agent_id', agent.id)
+      .maybeSingle();
+
+    if (existingVote.data) return;
+
+    const normalizedProposal = this.normalizeProposal(proposal);
+    const agentContext = this.buildAgentVoteContext(agent);
+
+    const ruleDecision = evaluateProposalRules(normalizedProposal, agentContext);
+
+    let vote = ruleDecision?.vote;
+    let reason = ruleDecision?.reasoning;
+
+    if (!vote) {
+      const prompt = buildVoteEvaluationPrompt(normalizedProposal, agentContext);
+      const response = await this.eliza.handleMessage(agent.agentId, {
+        entityId: proposal.creator_agent_id || proposal.id,
+        roomId: proposal.forum_id,
+        content: {
+          text: prompt,
+          source: 'uniforum',
+        },
+      });
+
+      const text = response.processing?.text?.trim() || '';
+      const lowered = text.toLowerCase();
+      if (lowered.startsWith('agree')) {
+        vote = 'agree';
+        reason = text.replace(/^agree\s*-\s*/i, '').trim();
+      } else if (lowered.startsWith('disagree')) {
+        vote = 'disagree';
+        reason = text.replace(/^disagree\s*-\s*/i, '').trim();
+      } else {
+        vote = 'disagree';
+        reason = 'Insufficient clarity to approve proposal.';
+      }
+    }
+
+    if (!vote) return;
+
+    await this.supabase.from('votes').insert({
+      proposal_id: proposal.id,
+      agent_id: agent.id,
+      vote,
+      reason,
+    });
+
+    await this.supabase.from('messages').insert({
+      forum_id: proposal.forum_id,
+      agent_id: agent.id,
+      content: `${vote.toUpperCase()}: ${reason || 'No reason provided.'}`,
+      type: 'vote',
+      metadata: {
+        proposalId: proposal.id,
+        vote,
+      },
+    });
+
+    console.log(`[agents] ${agent.ensName} voted ${vote} on proposal ${proposal.id}`);
+  }
+
+  private async fetchForum(forumId: string): Promise<Forum | null> {
+    const { data: forum } = await this.supabase.from('forums').select('*').eq('id', forumId).single();
+    if (!forum) return null;
+
+    return {
+      id: forum.id,
+      title: forum.title,
+      goal: forum.goal,
+      pool: forum.pool ?? undefined,
+      creatorAgentId: forum.creator_agent_id,
+      creatorEnsName: '',
+      quorumThreshold: forum.quorum_threshold,
+      minParticipants: forum.min_participants,
+      timeoutMinutes: forum.timeout_minutes,
+      status: forum.status,
+      participantCount: 0,
+      createdAt: forum.created_at,
+      lastActivityAt: forum.last_activity_at,
+      expiresAt: forum.expires_at ?? undefined,
+    };
+  }
+
+  private async fetchRecentMessages(forumId: string): Promise<ForumMessage[]> {
+    const { data: messages } = await this.supabase
+      .from('messages')
+      .select('id, forum_id, agent_id, content, type, metadata, created_at, agents(full_ens_name)')
+      .eq('forum_id', forumId)
+      .order('created_at', { ascending: false })
+      .limit(8);
+
+    if (!messages) return [];
+
+    return messages.map((message) => ({
+      id: message.id,
+      forumId: message.forum_id,
+      agentId: message.agent_id ?? undefined,
+      agentEnsName: (message.agents as any)?.full_ens_name ?? undefined,
+      content: message.content,
+      type: message.type,
+      metadata: message.metadata as any,
+      createdAt: message.created_at,
+    }));
+  }
+
+  private buildAgentDiscussionContext(agent: AgentInstance) {
+    return {
+      name: agent.character.name,
+      ensName: agent.ensName,
+      strategy: agent.character.clientConfig.uniforum.strategy as
+        | 'conservative'
+        | 'moderate'
+        | 'aggressive',
+      riskTolerance: agent.character.clientConfig.uniforum.riskTolerance,
+      preferredPools: agent.character.clientConfig.uniforum.preferredPools,
+      expertiseContext: agent.character.clientConfig.uniforum.expertiseContext,
+    };
+  }
+
+  private buildAgentVoteContext(agent: AgentInstance) {
+    return {
+      strategy: agent.character.clientConfig.uniforum.strategy as
+        | 'conservative'
+        | 'moderate'
+        | 'aggressive',
+      riskTolerance: agent.character.clientConfig.uniforum.riskTolerance,
+      preferredPools: agent.character.clientConfig.uniforum.preferredPools,
+      expertiseContext:
+        agent.character.clientConfig.uniforum.expertiseContext ||
+        agent.character.clientConfig.uniforum.preferredPools.join(', '),
+    };
+  }
+
+  private normalizeProposal(proposal: any): Proposal {
+    return {
+      id: proposal.id,
+      forumId: proposal.forum_id,
+      creatorAgentId: proposal.creator_agent_id,
+      creatorEnsName: '',
+      description: proposal.description ?? undefined,
+      action: proposal.action,
+      params: proposal.params,
+      hooks: proposal.hooks ?? undefined,
+      status: proposal.status,
+      agreeCount: proposal.agree_count ?? 0,
+      disagreeCount: proposal.disagree_count ?? 0,
+      createdAt: proposal.created_at,
+      expiresAt: proposal.expires_at,
+      resolvedAt: proposal.resolved_at ?? undefined,
+    };
   }
 }
