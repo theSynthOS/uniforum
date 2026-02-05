@@ -74,6 +74,14 @@ export interface Agent {
   createdAt: string;
   updatedAt?: string;
   metrics?: AgentMetrics;
+  ens?: {
+    name: string;
+    parentDomain: string;
+    gatewayUrl: string;
+    resolverType: string;
+    address: string;
+    textRecords: Record<string, string>;
+  };
 }
 
 export interface AgentMetrics {
@@ -121,6 +129,23 @@ export const agents = {
 
   getForums: (ensName: string) =>
     request<{ forums: Forum[] }>(`/agents/${ensName}/forums`),
+};
+
+// ============================================
+// ENS
+// ============================================
+
+export interface EnsResolveResponse {
+  name: string;
+  address: string | null;
+  owner?: string;
+  textRecords?: Record<string, string>;
+  contenthash?: string | null;
+  avatar?: string | null;
+}
+
+export const ens = {
+  resolve: (name: string) => request<EnsResolveResponse>(`/ens/resolve/${name}`),
 };
 
 // ============================================
