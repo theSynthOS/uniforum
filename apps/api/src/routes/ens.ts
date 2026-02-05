@@ -1,8 +1,25 @@
 import { Hono } from 'hono';
 import { getSupabase } from '../lib/supabase';
 import { buildEnsTextRecords, ENS_TEXT_KEYS } from '@uniforum/contracts';
+import { ENS_CONFIG } from '@uniforum/shared';
 
 export const ensRoutes = new Hono();
+
+const ENS_SUFFIX = `.${ENS_CONFIG.PARENT_DOMAIN}`;
+
+function normalizeEnsInput(input: string) {
+  const trimmed = input.trim().toLowerCase();
+  if (trimmed.endsWith(ENS_SUFFIX)) {
+    return {
+      subdomain: trimmed.slice(0, -ENS_SUFFIX.length),
+      full: trimmed,
+    };
+  }
+  return {
+    subdomain: trimmed,
+    full: `${trimmed}${ENS_SUFFIX}`,
+  };
+}
 
 /**
  * ENS Offchain Resolver Gateway
@@ -22,14 +39,7 @@ ensRoutes.get('/resolve/:name', async (c) => {
   const name = c.req.param('name');
   const supabase = getSupabase();
 
-  // Normalize name - handle both "agentname" and "agentname.uniforum.eth"
-  let ensName = name;
-  if (!name.endsWith('.uniforum.eth')) {
-    ensName = `${name}.uniforum.eth`;
-  }
-
-  // Extract subdomain
-  const subdomain = ensName.replace('.uniforum.eth', '');
+  const { subdomain, full: ensName } = normalizeEnsInput(name);
 
   // Query agent
   const { data: agent, error } = await supabase
@@ -40,7 +50,7 @@ ensRoutes.get('/resolve/:name', async (c) => {
       agent_wallets (wallet_address)
     `
     )
-    .eq('ens_name', ensName)
+    .eq('ens_name', subdomain)
     .eq('status', 'active')
     .single();
 
@@ -89,10 +99,7 @@ ensRoutes.get('/text/:name/:key', async (c) => {
   const key = c.req.param('key');
   const supabase = getSupabase();
 
-  let ensName = name;
-  if (!name.endsWith('.uniforum.eth')) {
-    ensName = `${name}.uniforum.eth`;
-  }
+  const { subdomain, full: ensName } = normalizeEnsInput(name);
 
   const { data: agent, error } = await supabase
     .from('agents')
@@ -102,7 +109,7 @@ ensRoutes.get('/text/:name/:key', async (c) => {
       agent_wallets (wallet_address)
     `
     )
-    .eq('ens_name', ensName)
+    .eq('ens_name', subdomain)
     .eq('status', 'active')
     .single();
 
@@ -125,7 +132,7 @@ ensRoutes.get('/text/:name/:key', async (c) => {
     'eth.uniforum.owner': agent.owner_address,
     'eth.uniforum.currentForum': agent.current_forum_id,
     // Standard ENS records
-    avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${ensName.replace('.uniforum.eth', '')}`,
+    avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${subdomain}`,
     description: `Uniforum agent with ${agent.strategy} strategy`,
     url: `https://uniforum.synthos.fun/agents/${ensName}`,
   };
@@ -154,15 +161,12 @@ ensRoutes.get('/address/:name', async (c) => {
   const name = c.req.param('name');
   const supabase = getSupabase();
 
-  let ensName = name;
-  if (!name.endsWith('.uniforum.eth')) {
-    ensName = `${name}.uniforum.eth`;
-  }
+  const { subdomain, full: ensName } = normalizeEnsInput(name);
 
   const { data: agent, error } = await supabase
     .from('agents')
     .select('agent_wallets (wallet_address)')
-    .eq('ens_name', ensName)
+    .eq('ens_name', subdomain)
     .eq('status', 'active')
     .single();
 

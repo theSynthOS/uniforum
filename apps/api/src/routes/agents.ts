@@ -11,6 +11,22 @@ export const agentsRoutes = new Hono<{
   };
 }>();
 
+const ENS_SUFFIX = `.${ENS_CONFIG.PARENT_DOMAIN}`;
+
+function normalizeEnsInput(input: string) {
+  const trimmed = input.trim().toLowerCase();
+  if (trimmed.endsWith(ENS_SUFFIX)) {
+    return {
+      subdomain: trimmed.slice(0, -ENS_SUFFIX.length),
+      full: trimmed,
+    };
+  }
+  return {
+    subdomain: trimmed,
+    full: `${trimmed}${ENS_SUFFIX}`,
+  };
+}
+
 // Validation schemas
 const createAgentSchema = z.object({
   name: z
@@ -43,6 +59,7 @@ agentsRoutes.get('/', optionalAuthMiddleware, async (c) => {
       `
       id,
       ens_name,
+      full_ens_name,
       owner_address,
       strategy,
       risk_tolerance,
@@ -80,8 +97,21 @@ agentsRoutes.get('/', optionalAuthMiddleware, async (c) => {
     return c.json({ error: 'Failed to fetch agents', message: error.message }, 500);
   }
 
+  const agentsList =
+    data?.map((agent) => ({
+      id: agent.id,
+      ensName: agent.full_ens_name || normalizeEnsInput(agent.ens_name).full,
+      ownerAddress: agent.owner_address,
+      strategy: agent.strategy,
+      riskTolerance: agent.risk_tolerance,
+      preferredPools: agent.preferred_pools,
+      status: agent.status,
+      createdAt: agent.created_at,
+      metrics: agent.agent_metrics?.[0],
+    })) || [];
+
   return c.json({
-    agents: data || [],
+    agents: agentsList,
     pagination: {
       limit: limitNum,
       offset: offsetNum,
@@ -115,13 +145,13 @@ agentsRoutes.post('/', authMiddleware, async (c) => {
   }
 
   const { name, strategy, riskTolerance, preferredPools, expertiseContext } = parsed.data;
-  const ensName = `${name}.uniforum.eth`;
+  const { subdomain, full: fullEnsName } = normalizeEnsInput(name);
 
   // Check if agent name already exists
   const { data: existing } = await supabase
     .from('agents')
     .select('id')
-    .eq('ens_name', ensName)
+    .eq('ens_name', subdomain)
     .single();
 
   if (existing) {
@@ -135,7 +165,7 @@ agentsRoutes.post('/', authMiddleware, async (c) => {
   const { data: agent, error: insertError } = await supabase
     .from('agents')
     .insert({
-      ens_name: ensName,
+      ens_name: subdomain,
       owner_address: user.walletAddress,
       strategy,
       risk_tolerance: riskTolerance,
@@ -175,7 +205,7 @@ agentsRoutes.post('/', authMiddleware, async (c) => {
   return c.json(
     {
       id: agent.id,
-      ensName: agent.ens_name,
+      ensName: (agent as any).full_ens_name || fullEnsName,
       ownerAddress: agent.owner_address,
       agentWallet: agentWalletAddress,
       strategy: agent.strategy,
@@ -184,7 +214,7 @@ agentsRoutes.post('/', authMiddleware, async (c) => {
       status: agent.status,
       createdAt: agent.created_at,
       ens: {
-        name: agent.ens_name,
+        name: (agent as any).full_ens_name || fullEnsName,
         parentDomain: ENS_CONFIG.PARENT_DOMAIN,
         gatewayUrl: ENS_CONFIG.GATEWAY_URL,
         resolverType: 'offchain-ccip-read',
@@ -204,10 +234,7 @@ agentsRoutes.get('/:ensName', optionalAuthMiddleware, async (c) => {
   const ensName = c.req.param('ensName');
   const supabase = getSupabase();
 
-  // Normalize ENS name
-  const normalizedName = ensName.endsWith('.uniforum.eth')
-    ? ensName
-    : `${ensName}.uniforum.eth`;
+  const { subdomain, full: fullEnsName } = normalizeEnsInput(ensName);
 
   const { data: agent, error } = await supabase
     .from('agents')
@@ -218,7 +245,7 @@ agentsRoutes.get('/:ensName', optionalAuthMiddleware, async (c) => {
       agent_metrics (*)
     `
     )
-    .eq('ens_name', normalizedName)
+    .eq('ens_name', subdomain)
     .single();
 
   if (error || !agent) {
@@ -227,7 +254,7 @@ agentsRoutes.get('/:ensName', optionalAuthMiddleware, async (c) => {
 
   return c.json({
     id: agent.id,
-    ensName: agent.ens_name,
+    ensName: (agent as any).full_ens_name || fullEnsName,
     ownerAddress: agent.owner_address,
     agentWallet: agent.agent_wallets?.[0]?.wallet_address,
     strategy: agent.strategy,
@@ -248,15 +275,13 @@ agentsRoutes.put('/:ensName', authMiddleware, async (c) => {
   const ensName = c.req.param('ensName');
   const supabase = getSupabase();
 
-  const normalizedName = ensName.endsWith('.uniforum.eth')
-    ? ensName
-    : `${ensName}.uniforum.eth`;
+  const { subdomain } = normalizeEnsInput(ensName);
 
   // Check ownership
   const { data: agent } = await supabase
     .from('agents')
     .select('id, owner_address')
-    .eq('ens_name', normalizedName)
+    .eq('ens_name', subdomain)
     .single();
 
   if (!agent) {
@@ -306,7 +331,7 @@ agentsRoutes.put('/:ensName', authMiddleware, async (c) => {
 
   return c.json({
     id: updated.id,
-    ensName: updated.ens_name,
+    ensName: (updated as any).full_ens_name || normalizeEnsInput(updated.ens_name).full,
     strategy: updated.strategy,
     riskTolerance: updated.risk_tolerance,
     preferredPools: updated.preferred_pools,
@@ -320,15 +345,13 @@ agentsRoutes.delete('/:ensName', authMiddleware, async (c) => {
   const ensName = c.req.param('ensName');
   const supabase = getSupabase();
 
-  const normalizedName = ensName.endsWith('.uniforum.eth')
-    ? ensName
-    : `${ensName}.uniforum.eth`;
+  const { subdomain } = normalizeEnsInput(ensName);
 
   // Check ownership
   const { data: agent } = await supabase
     .from('agents')
     .select('id, owner_address')
-    .eq('ens_name', normalizedName)
+    .eq('ens_name', subdomain)
     .single();
 
   if (!agent) {
@@ -350,14 +373,12 @@ agentsRoutes.get('/:ensName/metrics', async (c) => {
   const ensName = c.req.param('ensName');
   const supabase = getSupabase();
 
-  const normalizedName = ensName.endsWith('.uniforum.eth')
-    ? ensName
-    : `${ensName}.uniforum.eth`;
+  const { subdomain } = normalizeEnsInput(ensName);
 
   const { data: agent } = await supabase
     .from('agents')
     .select('id')
-    .eq('ens_name', normalizedName)
+    .eq('ens_name', subdomain)
     .single();
 
   if (!agent) {
@@ -390,14 +411,12 @@ agentsRoutes.get('/:ensName/forums', async (c) => {
   const ensName = c.req.param('ensName');
   const supabase = getSupabase();
 
-  const normalizedName = ensName.endsWith('.uniforum.eth')
-    ? ensName
-    : `${ensName}.uniforum.eth`;
+  const { subdomain, full: fullEnsName } = normalizeEnsInput(ensName);
 
   const { data: agent } = await supabase
     .from('agents')
     .select('id')
-    .eq('ens_name', normalizedName)
+    .eq('ens_name', subdomain)
     .single();
 
   if (!agent) {
@@ -408,7 +427,7 @@ agentsRoutes.get('/:ensName/forums', async (c) => {
   const { data: forums, error } = await supabase
     .from('forums')
     .select('*')
-    .contains('participants', [normalizedName])
+    .contains('participants', [fullEnsName])
     .order('created_at', { ascending: false });
 
   if (error) {
