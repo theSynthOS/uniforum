@@ -19,15 +19,35 @@ export interface AgentConfig {
 
 export interface AgentCharacter {
   name: string;
-  bio: string[];
-  adjectives: string[];
-  knowledge: string[];
-  modelProvider: string;
-  settings: {
-    model: string;
-    temperature: number;
+  bio: string[] | string;
+  adjectives?: string[];
+  topics?: string[];
+  knowledge?: Array<string | { path: string; shared?: boolean }>;
+  system?: string;
+  templates?: Record<string, string | ((params: any) => string)>;
+  messageExamples?: Array<
+    Array<{
+      name: string;
+      content: { text: string };
+    }>
+  >;
+  postExamples?: string[];
+  style?: {
+    all?: string[];
+    chat?: string[];
+    post?: string[];
   };
-  plugins: string[];
+  plugins?: string[];
+  settings?: {
+    model?: string;
+    temperature?: number;
+    maxTokens?: number;
+    memoryLimit?: number;
+    conversationLength?: number;
+    responseTimeout?: number;
+    secrets?: Record<string, string | undefined>;
+  };
+  secrets?: Record<string, string | undefined>;
   clientConfig: {
     uniforum: {
       ensName: string;
@@ -36,6 +56,7 @@ export interface AgentCharacter {
       strategy: string;
       riskTolerance: number;
       preferredPools: string[];
+      expertiseContext?: string;
       uniswapHistory?: {
         totalSwaps: number;
         totalLiquidityProvided: string;
@@ -49,6 +70,7 @@ export interface AgentInstance {
   id: string;
   ensName: string;
   character: AgentCharacter;
+  agentId?: string;
   runtime: any; // Will be typed when Eliza is integrated
   status: 'active' | 'idle' | 'offline';
 }
