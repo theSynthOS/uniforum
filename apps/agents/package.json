@@ -13,6 +13,7 @@
   "dependencies": {
     "@elizaos/core": "^0.1.0",
     "@elizaos/plugin-node": "^0.1.0",
+    "@elizaos/plugin-openai": "^0.1.0",
     "@supabase/supabase-js": "^2.39.0",
     "@uniforum/contracts": "workspace:*",
     "@uniforum/forum": "workspace:*",
