@@ -6,7 +6,7 @@
     "target": "ESNext",
     "outDir": "./dist",
     "rootDir": "./src",
-    "types": ["bun-types"],
+    "types": ["bun-types", "node"],
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
