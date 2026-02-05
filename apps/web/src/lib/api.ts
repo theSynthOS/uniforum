@@ -109,9 +109,10 @@ export const agents = {
     if (params?.limit) query.set('limit', params.limit.toString());
     if (params?.offset) query.set('offset', params.offset.toString());
     const queryString = query.toString();
-    return request<{ agents: Agent[]; pagination: { limit: number; offset: number; total: number } }>(
-      `/agents${queryString ? `?${queryString}` : ''}`
-    );
+    return request<{
+      agents: Agent[];
+      pagination: { limit: number; offset: number; total: number };
+    }>(`/agents${queryString ? `?${queryString}` : ''}`);
   },
 
   get: (ensName: string) => request<Agent>(`/agents/${ensName}`),
@@ -127,8 +128,7 @@ export const agents = {
 
   getMetrics: (ensName: string) => request<AgentMetrics>(`/agents/${ensName}/metrics`),
 
-  getForums: (ensName: string) =>
-    request<{ forums: Forum[] }>(`/agents/${ensName}/forums`),
+  getForums: (ensName: string) => request<{ forums: Forum[] }>(`/agents/${ensName}/forums`),
 };
 
 // ============================================
@@ -143,10 +143,6 @@ export interface EnsResolveResponse {
   contenthash?: string | null;
   avatar?: string | null;
 }
-
-export const ens = {
-  resolve: (name: string) => request<EnsResolveResponse>(`/ens/resolve/${name}`),
-};
 
 // ============================================
 // FORUMS
@@ -198,9 +194,10 @@ export const forums = {
     if (params?.limit) query.set('limit', params.limit.toString());
     if (params?.offset) query.set('offset', params.offset.toString());
     const queryString = query.toString();
-    return request<{ forums: Forum[]; pagination: { limit: number; offset: number; total: number } }>(
-      `/forums${queryString ? `?${queryString}` : ''}`
-    );
+    return request<{
+      forums: Forum[];
+      pagination: { limit: number; offset: number; total: number };
+    }>(`/forums${queryString ? `?${queryString}` : ''}`);
   },
 
   get: (forumId: string) => request<Forum>(`/forums/${forumId}`),
@@ -228,9 +225,10 @@ export const forums = {
     if (params?.offset) query.set('offset', params.offset.toString());
     if (params?.since) query.set('since', params.since);
     const queryString = query.toString();
-    return request<{ messages: Message[]; pagination: { limit: number; offset: number; total: number } }>(
-      `/forums/${forumId}/messages${queryString ? `?${queryString}` : ''}`
-    );
+    return request<{
+      messages: Message[];
+      pagination: { limit: number; offset: number; total: number };
+    }>(`/forums/${forumId}/messages${queryString ? `?${queryString}` : ''}`);
   },
 
   postMessage: (forumId: string, data: CreateMessageRequest, token: string) =>
@@ -293,11 +291,14 @@ export const proposals = {
   get: (proposalId: string) => request<Proposal>(`/proposals/${proposalId}`),
 
   vote: (proposalId: string, data: CastVoteRequest, token: string) =>
-    request<Vote & { consensusReached: boolean; voteTally: VoteTally }>(`/proposals/${proposalId}/vote`, {
-      method: 'POST',
-      body: data,
-      token,
-    }),
+    request<Vote & { consensusReached: boolean; voteTally: VoteTally }>(
+      `/proposals/${proposalId}/vote`,
+      {
+        method: 'POST',
+        body: data,
+        token,
+      }
+    ),
 };
 
 // ============================================
@@ -318,14 +319,21 @@ export interface Execution {
 }
 
 export const executions = {
-  list: (params?: { forumId?: string; proposalId?: string; agentEns?: string; status?: string }) => {
+  list: (params?: {
+    forumId?: string;
+    proposalId?: string;
+    agentEns?: string;
+    status?: string;
+  }) => {
     const query = new URLSearchParams();
     if (params?.forumId) query.set('forumId', params.forumId);
     if (params?.proposalId) query.set('proposalId', params.proposalId);
     if (params?.agentEns) query.set('agentEns', params.agentEns);
     if (params?.status) query.set('status', params.status);
     const queryString = query.toString();
-    return request<{ executions: Execution[] }>(`/executions${queryString ? `?${queryString}` : ''}`);
+    return request<{ executions: Execution[] }>(
+      `/executions${queryString ? `?${queryString}` : ''}`
+    );
   },
 
   get: (executionId: string) => request<Execution>(`/executions/${executionId}`),

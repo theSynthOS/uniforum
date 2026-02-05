@@ -149,33 +149,33 @@ export default function CreateAgentModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6">
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4 sm:items-center sm:p-6">
       <div
         role="dialog"
         aria-modal="true"
-        className="relative w-full max-w-5xl overflow-hidden rounded-none border-4 border-[#3a2b1f] bg-[#1a1410] text-[#f5e6c8] shadow-[0_0_0_4px_#6b4b2a]"
+        className="relative w-full max-w-5xl overflow-y-auto rounded-none border-4 border-[#3a2b1f] bg-[#1a1410] text-[#f5e6c8] shadow-[0_0_0_4px_#6b4b2a] sm:max-h-[85vh]"
         style={{
           backgroundImage:
             'linear-gradient(90deg, rgba(255,214,128,0.04) 1px, transparent 1px), linear-gradient(rgba(255,214,128,0.04) 1px, transparent 1px)',
           backgroundSize: '16px 16px',
         }}
       >
-        <div className="flex items-center justify-between border-b-4 border-[#3a2b1f] px-6 py-4">
+        <div className="flex flex-col gap-4 border-b-4 border-[#3a2b1f] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <div>
             <p
-              className="text-[10px] uppercase tracking-[0.4em] text-[#ffd966]"
+              className="text-[9px] uppercase tracking-[0.4em] text-[#ffd966] sm:text-[10px]"
               style={{ fontFamily: '"Press Start 2P", "VT323", monospace' }}
             >
               Create Agent
             </p>
-            <h2 className="mt-2 text-xl font-semibold">ENS-Backed LP Persona</h2>
+            <h2 className="mt-2 text-lg font-semibold sm:text-xl">ENS-Backed LP Persona</h2>
           </div>
           <Button variant="ghost" size="small" onClick={onClose} ariaLabel="Close modal">
             Close
           </Button>
         </div>
 
-        <div className="grid gap-6 p-6 lg:grid-cols-[1.2fr_1fr]">
+        <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-[1.2fr_1fr]">
           <section className="space-y-6">
             <div className="rounded-none border-2 border-[#3a2b1f] bg-[#201915] p-5">
               <p className="mb-3 text-xs uppercase tracking-[0.3em] text-[#ffd966]">
@@ -214,7 +214,7 @@ export default function CreateAgentModal({ onClose }: { onClose: () => void }) {
                         key={option}
                         type="button"
                         onClick={() => setStrategy(option)}
-                        className={`border-2 px-3 py-2 text-[10px] uppercase tracking-[0.2em] ${
+                        className={`border-2 px-3 py-2 text-[9px] uppercase tracking-[0.2em] sm:text-[10px] ${
                           strategy === option
                             ? 'border-[#ffd966] bg-[#3a2b1f] text-[#ffd966]'
                             : 'border-[#3a2b1f] bg-[#120d0a] text-[#c9b693]'
@@ -297,7 +297,9 @@ export default function CreateAgentModal({ onClose }: { onClose: () => void }) {
                     ([key, value]) => (
                     <div key={key} className="flex items-start justify-between gap-3">
                       <span className="text-[#ffd966]">{key}</span>
-                      <span className="max-w-[60%] text-right text-[#f5e6c8]">{value}</span>
+                      <span className="max-w-[60%] break-words text-right text-[#f5e6c8]">
+                        {value}
+                      </span>
                     </div>
                     )
                   )}
@@ -321,16 +323,26 @@ export default function CreateAgentModal({ onClose }: { onClose: () => void }) {
           </section>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t-4 border-[#3a2b1f] px-6 py-4">
+        <div className="flex flex-col gap-4 border-t-4 border-[#3a2b1f] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <div className="text-xs text-[#c9b693]">
             <p>ENS metadata is derived from your profile and written via the offchain resolver.</p>
             {error ? <p className="mt-2 text-[#ff9a7a]">{error}</p> : null}
           </div>
-          <div className="flex gap-3">
-            <Button variant="ghost" size="small" onClick={onClose}>
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <Button
+              variant="ghost"
+              size="small"
+              onClick={onClose}
+              className="w-full sm:w-auto"
+            >
               Cancel
             </Button>
-            <Button size="small" onClick={handleCreate} disabled={!canSubmit}>
+            <Button
+              size="small"
+              onClick={handleCreate}
+              disabled={!canSubmit}
+              className="w-full sm:w-auto"
+            >
               {authenticated ? (isSubmitting ? 'Creating...' : 'Create Agent') : 'Connect Wallet'}
             </Button>
           </div>

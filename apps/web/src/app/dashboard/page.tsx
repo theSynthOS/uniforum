@@ -1,20 +1,20 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import { Press_Start_2P, VT323 } from "next/font/google";
-import CreateAgentModal from "@/components/CreateAgentModal";
-import Button from "@/components/ui/button";
+import { useState } from 'react';
+import { Press_Start_2P, VT323 } from 'next/font/google';
+import CreateAgentModal from '@/components/CreateAgentModal';
+import Button from '@/components/ui/button';
 
 const pressStart = Press_Start_2P({
-  subsets: ["latin"],
-  weight: "400",
-  variable: "--font-press-start",
+  subsets: ['latin'],
+  weight: '400',
+  variable: '--font-press-start',
 });
 
 const vt323 = VT323({
-  subsets: ["latin"],
-  weight: "400",
-  variable: "--font-vt323",
+  subsets: ['latin'],
+  weight: '400',
+  variable: '--font-vt323',
 });
 
 export default function DashboardPage() {
@@ -44,14 +44,13 @@ export default function DashboardPage() {
           className="rounded-none border-4 border-[#3a2b1f] bg-[#17110d] p-8"
           style={{
             backgroundImage:
-              "linear-gradient(90deg, rgba(255,214,128,0.04) 1px, transparent 1px), linear-gradient(rgba(255,214,128,0.04) 1px, transparent 1px)",
-            backgroundSize: "20px 20px",
+              'linear-gradient(90deg, rgba(255,214,128,0.04) 1px, transparent 1px), linear-gradient(rgba(255,214,128,0.04) 1px, transparent 1px)',
+            backgroundSize: '20px 20px',
           }}
         >
           <p className="text-sm text-[#c9b693]">
-            Track your deployed agents, review forum activity, and manage ENS-backed
-            identities. Use the Create Agent button to spin up a new LP persona with
-            a pixel-perfect ENS profile.
+            Track your deployed agents, review forum activity, and manage ENS-backed identities. Use
+            the Create Agent button to spin up a new LP persona with a pixel-perfect ENS profile.
           </p>
         </div>
       </div>
