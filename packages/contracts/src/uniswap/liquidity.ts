@@ -9,7 +9,7 @@
 import type { Hash } from 'viem';
 import { unichainSepolia, unichainMainnet } from '../chains';
 import { createUniswapClients, getUniswapAddresses } from './client';
-import { buildAddLiquidityCalldata, buildRemoveLiquidityCalldata } from './v4PositionCalldata';
+import { buildAddLiquidityCalldata, buildAddLiquidityFromDeltasCalldata, buildDecreaseLiquidityUnlockData } from './v4PositionCalldata';
 import type { LiquidityParams, ProposalHooks } from '@uniforum/shared';
 
 const UNIVERSAL_ROUTER_ABI = [
@@ -110,26 +110,29 @@ export async function addLiquidity(options: AddLiquidityOptions): Promise<Liquid
     const hookData = hooks?.dynamicFee?.enabled || hooks?.overrideFee?.enabled
       ? '0x'
       : '0x';
-    const { commands, inputs } = buildAddLiquidityCalldata(
-      {
-        poolKey: {
-          currency0: p.currency0!,
-          currency1: p.currency1!,
-          fee: p.fee!,
-          tickSpacing: p.tickSpacing!,
-          hooks: p.hooksAddress,
-        },
-        tickLower: p.tickLower!,
-        tickUpper: p.tickUpper!,
-        liquidity: p.liquidity ?? '0',
-        amount0Max: p.amount0!,
-        amount1Max: p.amount1!,
-        recipient,
-        hookData,
-        useNativeEth: p.currency0 === '0x0000000000000000000000000000000000000000',
+    const liquidityValue = p.liquidity ?? '0';
+    const useFromDeltas = liquidityValue === '0' || liquidityValue === '';
+    const mintBaseParams = {
+      poolKey: {
+        currency0: p.currency0!,
+        currency1: p.currency1!,
+        fee: p.fee!,
+        tickSpacing: p.tickSpacing!,
+        hooks: p.hooksAddress,
       },
-      deadline
-    );
+      tickLower: p.tickLower!,
+      tickUpper: p.tickUpper!,
+      amount0Max: p.amount0!,
+      amount1Max: p.amount1!,
+      recipient,
+      hookData,
+      useNativeEth: p.currency0 === '0x0000000000000000000000000000000000000000',
+    };
+
+    // Use MINT_POSITION_FROM_DELTAS (0x05) when no liquidity specified — auto-calculates from amounts
+    const { commands, inputs } = useFromDeltas
+      ? buildAddLiquidityFromDeltasCalldata(mintBaseParams, deadline)
+      : buildAddLiquidityCalldata({ ...mintBaseParams, liquidity: liquidityValue }, deadline);
 
     const value = p.currency0 === '0x0000000000000000000000000000000000000000' ? BigInt(p.amount0!) : 0n;
     const { request } = await publicClient.simulateContract({
@@ -154,17 +157,32 @@ export async function addLiquidity(options: AddLiquidityOptions): Promise<Liquid
   }
 }
 
+const POSITION_MANAGER_ABI = [
+  {
+    inputs: [
+      { name: 'unlockData', type: 'bytes' },
+      { name: 'deadline', type: 'uint256' },
+    ],
+    name: 'modifyLiquidities',
+    outputs: [],
+    stateMutability: 'payable',
+    type: 'function',
+  },
+] as const;
+
 /**
- * Remove liquidity (decrease + take pair) via Universal Router 0x14.
- * Options must include currency0, currency1, recipient (or use executor) for encoding.
+ * Remove liquidity (decrease + take pair) via PositionManager.modifyLiquidities() directly.
+ *
+ * DECREASE_LIQUIDITY cannot go through the Universal Router's V4_POSITION_MANAGER_CALL (0x14)
+ * because the router's _checkV4PositionManagerCall() only allows MINT_POSITION actions.
  */
 export async function removeLiquidity(options: RemoveLiquidityOptions): Promise<LiquidityResult> {
   const { privateKey, tokenId, liquidityToRemove, hooks, chainId = 1301, currency0, currency1, recipient: optRecipient, amount0Min, amount1Min } = options;
 
   try {
     const addresses = getUniswapAddresses(chainId);
-    if (!isConfiguredAddress(addresses.universalRouter)) {
-      return { success: false, error: 'Universal Router not configured for this chain' };
+    if (!isConfiguredAddress(addresses.positionManager)) {
+      return { success: false, error: 'Position Manager not configured for this chain' };
     }
 
     const chain = chainId === 130 ? unichainMainnet : unichainSepolia;
@@ -179,25 +197,22 @@ export async function removeLiquidity(options: RemoveLiquidityOptions): Promise<
       };
     }
 
-    const { commands, inputs } = buildRemoveLiquidityCalldata(
-      {
-        tokenId: tokenId.toString(),
-        liquidity: liquidityToRemove.toString(),
-        amount0Min: amount0Min ?? '0',
-        amount1Min: amount1Min ?? '0',
-        currency0,
-        currency1,
-        recipient,
-        hookData: '0x',
-      },
-      deadline
-    );
+    const unlockData = buildDecreaseLiquidityUnlockData({
+      tokenId: tokenId.toString(),
+      liquidity: liquidityToRemove.toString(),
+      amount0Min: amount0Min ?? '0',
+      amount1Min: amount1Min ?? '0',
+      currency0,
+      currency1,
+      recipient,
+      hookData: '0x',
+    });
 
     const { request } = await publicClient.simulateContract({
-      address: addresses.universalRouter as `0x${string}`,
-      abi: UNIVERSAL_ROUTER_ABI,
-      functionName: 'execute',
-      args: [commands, inputs, deadline],
+      address: addresses.positionManager as `0x${string}`,
+      abi: POSITION_MANAGER_ABI,
+      functionName: 'modifyLiquidities',
+      args: [unlockData, deadline],
       account: account!,
     });
     const txHash = await walletClient.writeContract(request);

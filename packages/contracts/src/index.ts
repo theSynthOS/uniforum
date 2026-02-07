@@ -12,6 +12,9 @@ export * from './uniswap/v4PositionCalldata';
 export * from './uniswap/liquidity';
 export * from './uniswap/limitOrder';
 export * from './uniswap/quoter';
+export * from './uniswap/permit2';
+export * from './uniswap/poolId';
+export * from './uniswap/stateView';
 
 // ENS
 export * from './ens/resolver';

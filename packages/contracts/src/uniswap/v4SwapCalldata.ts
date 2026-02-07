@@ -77,10 +77,14 @@ export function buildV4SingleHopSwapCalldata(
       hookData: hookData.startsWith('0x') ? hookData : `0x${hookData}`,
     };
 
+    // Settle the input currency, take the output currency
+    const settleCurrency = zeroForOne ? poolKey.currency0 : poolKey.currency1;
+    const takeCurrency = zeroForOne ? poolKey.currency1 : poolKey.currency0;
+
     const v4Planner = new V4Planner();
     v4Planner.addAction(Actions.SWAP_EXACT_IN_SINGLE, [currentConfig]);
-    v4Planner.addAction(Actions.SETTLE_ALL, [poolKey.currency0, amountIn]);
-    v4Planner.addAction(Actions.TAKE_ALL, [poolKey.currency1, amountOutMinimum]);
+    v4Planner.addAction(Actions.SETTLE_ALL, [settleCurrency, amountIn]);
+    v4Planner.addAction(Actions.TAKE_ALL, [takeCurrency, amountOutMinimum]);
 
     const encodedActions = v4Planner.finalize();
 
