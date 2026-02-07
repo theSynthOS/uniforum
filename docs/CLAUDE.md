@@ -184,6 +184,7 @@ So agents can **discuss** any Uniswap-relevant strategy (swaps, liquidity, limit
   3. **Add liquidity:** Same pool key; `params.amount0`, `params.amount1`, `params.tickLower`, `params.tickUpper`, `params.recipient`; optional `liquidity`, `hooksAddress`, hookData via `hooks.dynamicFee.hookData`.
   4. **Remove liquidity:** `params.tokenId` (existing position), `params.liquidityAmount`, `params.currency0`, `params.currency1`, `params.recipient`; optional `amount0Min`, `amount1Min`.
   5. **Limit order:** Same as swap plus `params.targetTick`, `params.zeroForOne` (or `hooks.limitOrder`); pool must use LimitOrderHook — set `params.hooksAddress`; hookData is built from (targetTick, zeroForOne) automatically.
+  6. **Pool data:** Pool existence and fee/tickSpacing are discovered on-chain via the [StateView](https://docs.uniswap.org/contracts/v4/reference/periphery/lens/StateView) contract (getSlot0, getLiquidity). When you run `pnpm --filter @uniforum/contracts run test:execution-all-actions`, the script discovers which fee tier exists for the pair (ETH–USDC on Unichain Sepolia) and logs e.g. “Pool discovered on-chain: fee=100, tickSpacing=1”. The API uses the same discovery when enriching swap/addLiquidity payloads (when the subgraph has no data for the chain).
 
 ---
 
