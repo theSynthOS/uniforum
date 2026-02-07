@@ -5,15 +5,7 @@
  * @see https://docs.uniswap.org/contracts/v4/reference/periphery/libraries/QuoterRevert
  */
 
-import {
-  BaseError,
-  ContractFunctionRevertedError,
-  createPublicClient,
-  decodeErrorResult,
-  encodeFunctionData,
-  http,
-  type Address,
-} from 'viem';
+import { createPublicClient, decodeErrorResult, encodeFunctionData, http, type Address } from 'viem';
 import { getUniswapAddresses } from './client';
 import { unichainSepolia, unichainMainnet } from '../chains';
 
@@ -110,17 +102,8 @@ export async function getQuoteExactInputSingle(
     });
     return null; // no revert = unexpected
   } catch (err: unknown) {
-    let revertData: `0x${string}` | undefined;
-    if (err instanceof BaseError) {
-      const reverted = err.walk((e) => e instanceof ContractFunctionRevertedError) as
-        | ContractFunctionRevertedError
-        | undefined;
-      if (reverted && typeof reverted.data === 'string') revertData = reverted.data as `0x${string}`;
-    }
-    if (!revertData) {
-      const e = err as { data?: `0x${string}`; cause?: { data?: `0x${string}` } };
-      revertData = e?.data ?? e?.cause?.data;
-    }
+    const e = err as { data?: `0x${string}`; cause?: { data?: `0x${string}` } };
+    const revertData = e?.data ?? e?.cause?.data;
     if (!revertData || typeof revertData !== 'string') return null;
     try {
       const decoded = decodeErrorResult({
