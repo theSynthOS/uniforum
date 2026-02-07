@@ -132,9 +132,14 @@ proposalsRoutes.get('/:proposalId/execution-payload', async (c) => {
     {
       rpcUrl: process.env.UNICHAIN_SEPOLIA_RPC_URL ?? process.env[`RPC_URL_${chainId}`],
       tokenListUrl: process.env.TOKEN_LIST_URL,
-      tokenListUrlByChain: process.env.TOKEN_LIST_URL_1301
-        ? { 1301: process.env.TOKEN_LIST_URL_1301 }
-        : undefined,
+      tokenListUrlByChain: [1301, 130].reduce(
+        (acc, id) => {
+          const u = process.env[`TOKEN_LIST_URL_${id}`];
+          if (u) acc[id] = u;
+          return acc;
+        },
+        {} as Record<number, string>
+      ),
       graphApiKey: process.env.GRAPH_API_KEY,
       subgraphUrl: process.env.UNISWAP_V4_SUBGRAPH_URL,
     }
