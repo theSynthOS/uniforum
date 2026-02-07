@@ -31,6 +31,10 @@ config({ path: resolve(__dirname, '../../../.env.local') });
 
 const RPC_URL = process.env.UNICHAIN_SEPOLIA_RPC_URL ?? 'https://sepolia.unichain.org';
 
+/** Unichain Sepolia (1301) token addresses — from docs.unichain.org contract-addresses */
+const UNICHAIN_SEPOLIA_ETH = '0x0000000000000000000000000000000000000000';
+const UNICHAIN_SEPOLIA_USDC = '0x31d0220469e10c4E71834a79b1f276d740d3768F';
+
 /** Known revert selectors (Universal Router / execution layer) for clearer error messages */
 const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   '0x2c4029e9':
@@ -54,8 +58,8 @@ const SAMPLE_PAYLOADS = {
       amount: '100000000000000000',
       slippage: 50,
       deadline: Math.floor(Date.now() / 1000) + 1800,
-      currency0: '0x0000000000000000000000000000000000000000',
-      currency1: '0x0000000000000000000000000000000000000000',
+      currency0: UNICHAIN_SEPOLIA_ETH,
+      currency1: UNICHAIN_SEPOLIA_USDC,
       fee: 500,
       tickSpacing: 10,
       amountOutMinimum: '0',
@@ -75,8 +79,8 @@ const SAMPLE_PAYLOADS = {
       amount1: '200000000',
       tickLower: -887220,
       tickUpper: 887220,
-      currency0: '0x0000000000000000000000000000000000000000',
-      currency1: '0x0000000000000000000000000000000000000000',
+      currency0: UNICHAIN_SEPOLIA_ETH,
+      currency1: UNICHAIN_SEPOLIA_USDC,
       fee: 500,
       tickSpacing: 10,
       liquidity: '0',
@@ -93,8 +97,8 @@ const SAMPLE_PAYLOADS = {
     params: {
       tokenId: '1',
       liquidityAmount: '1000000',
-      currency0: '0x0000000000000000000000000000000000000000',
-      currency1: '0x0000000000000000000000000000000000000000',
+      currency0: UNICHAIN_SEPOLIA_ETH,
+      currency1: UNICHAIN_SEPOLIA_USDC,
       recipient: '0x0000000000000000000000000000000000000001',
       amount0Min: '0',
       amount1Min: '0',
@@ -112,8 +116,8 @@ const SAMPLE_PAYLOADS = {
       amount: '100000000000000000',
       targetTick: -100,
       zeroForOne: true,
-      currency0: '0x0000000000000000000000000000000000000000',
-      currency1: '0x0000000000000000000000000000000000000000',
+      currency0: UNICHAIN_SEPOLIA_ETH,
+      currency1: UNICHAIN_SEPOLIA_USDC,
       fee: 500,
       tickSpacing: 10,
       amountOutMinimum: '0',
