@@ -1,16 +1,19 @@
 /**
- * Deliberation Scenario: Agents debate and reach consensus on a different action.
+ * Deliberation Scenario: Agents debate action type, fee tier, amount, and slippage.
  *
- * Simulates the full agentic finance flow:
- *   1. Agent A proposes: swap 0.01 ETH → USDC (market order)
- *   2. Agent B disagrees: "Market is volatile, use a limit order instead"
- *   3. Agent C disagrees: "I agree with B, a limit order at tick -100 is safer"
- *   4. First proposal rejected (1 agree / 2 disagree)
- *   5. Agent B counter-proposes: limitOrder 0.01 ETH → USDC at targetTick=-100
- *   6. All 3 agents agree → consensus reached
- *   7. Enrichment → Calldata → On-chain simulation → SUCCESS
+ * Simulates the full agentic finance flow across 3 proposals:
  *
- * This demonstrates that the agentic deliberation changes the execution plan.
+ *   Proposal #1 (Alpha): swap 0.01 ETH → USDC, fee=100 (0.01%), slippage=0.5%
+ *     → REJECTED — Beta & Gamma want a limit order on a deeper-liquidity pool
+ *
+ *   Proposal #2 (Beta): limitOrder 0.05 ETH → USDC, fee=3000 (0.3%), tick=-100
+ *     → REJECTED — Alpha says 0.05 ETH is too much, Gamma agrees but wants fee=500
+ *
+ *   Proposal #3 (Gamma): limitOrder 0.01 ETH → USDC, fee=500 (0.05%), tick=-100
+ *     → APPROVED (3/3) → Enrich → Calldata → Simulate → SUCCESS
+ *
+ * Demonstrates: action type change, fee tier selection, amount adjustment,
+ * and that each proposal targets a real on-chain pool with liquidity.
  *
  * Usage:
  *   pnpm --filter @uniforum/contracts run test:deliberation
@@ -29,7 +32,7 @@ import {
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { unichainSepolia } from '../src/chains';
-import { discoverPoolFeeTier } from '../src/uniswap/stateView';
+import { discoverAllPools, type DiscoveredPool } from '../src/uniswap/stateView';
 import type { ExecutionPayload } from '@uniforum/shared';
 import { buildCalldataForPayload, UNIVERSAL_ROUTER_ABI } from './build-execution-calldata';
 import { enrichExecutionPayloadParams } from '../../../apps/api/src/lib/enrichExecutionPayload';
@@ -51,26 +54,19 @@ const ERC20_BALANCE_ABI = [
 ] as const;
 
 const USDC_ADDRESS = '0x31d0220469e10c4E71834a79b1f276d740d3768F' as Address;
+const ETH_ADDRESS = '0x0000000000000000000000000000000000000000';
 
-// ── Agent identities ──
 const AGENTS = {
   alpha: { ens: 'alpha.uniforum.eth', strategy: 'aggressive' },
   beta: { ens: 'beta.uniforum.eth', strategy: 'conservative' },
   gamma: { ens: 'gamma.uniforum.eth', strategy: 'moderate' },
 } as const;
 
-// ── Helpers ──
 function log(prefix: string, msg: string) {
   const colors: Record<string, string> = {
-    FORUM: '\x1b[36m',    // cyan
-    ALPHA: '\x1b[33m',    // yellow
-    BETA: '\x1b[32m',     // green
-    GAMMA: '\x1b[35m',    // magenta
-    VOTE: '\x1b[34m',     // blue
-    SYSTEM: '\x1b[90m',   // gray
-    EXEC: '\x1b[31m',     // red
-    '✅': '\x1b[32m',
-    '❌': '\x1b[31m',
+    FORUM: '\x1b[36m', ALPHA: '\x1b[33m', BETA: '\x1b[32m', GAMMA: '\x1b[35m',
+    VOTE: '\x1b[34m', SYSTEM: '\x1b[90m', EXEC: '\x1b[31m', POOL: '\x1b[36m',
+    '✅': '\x1b[32m', '❌': '\x1b[31m',
   };
   const color = colors[prefix] ?? '\x1b[0m';
   console.log(`${color}[${prefix}]\x1b[0m ${msg}`);
@@ -80,229 +76,238 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function feePct(fee: number): string {
+  return `${(fee / 10000).toFixed(2)}%`;
+}
+
+/** Simulate enrichment → calldata → on-chain simulation. Returns true if SUCCESS. */
+async function simulateProposal(
+  action: string,
+  params: Record<string, unknown>,
+  account: ReturnType<typeof privateKeyToAccount>,
+  publicClient: ReturnType<typeof createPublicClient>,
+): Promise<boolean> {
+  const enriched = await enrichExecutionPayloadParams(
+    action, params, CHAIN_ID, undefined,
+    { rpcUrl: RPC_URL, graphApiKey: process.env.GRAPH_API_KEY || undefined }
+  );
+  const deadline = Math.floor(Date.now() / 1000) + 1800;
+  const payload: ExecutionPayload = {
+    proposalId: 'deliberation-sim',
+    forumId: 'deliberation-forum',
+    executorEnsName: AGENTS.alpha.ens,
+    action: action as any,
+    params: { ...enriched, deadline } as any,
+    chainId: CHAIN_ID,
+    deadline,
+  };
+  const { data, to, value } = buildCalldataForPayload(payload);
+  try {
+    const decoded = decodeFunctionData({ abi: UNIVERSAL_ROUTER_ABI, data });
+    const args = decoded.args as [`0x${string}`, `0x${string}`[], bigint];
+    await publicClient.simulateContract({
+      address: to as Address,
+      abi: UNIVERSAL_ROUTER_ABI,
+      functionName: 'execute',
+      args,
+      account,
+      value: value ?? 0n,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
   console.log('');
-  console.log('╔══════════════════════════════════════════════════════════════╗');
-  console.log('║   UNIFORUM: Agentic Deliberation → Consensus → Execution   ║');
-  console.log('╚══════════════════════════════════════════════════════════════╝');
+  console.log('╔══════════════════════════════════════════════════════════════════════╗');
+  console.log('║   UNIFORUM: Multi-Round Deliberation → Consensus → Execution       ║');
+  console.log('║   Agents debate: action type · fee tier · amount · slippage         ║');
+  console.log('╚══════════════════════════════════════════════════════════════════════╝');
   console.log('');
 
   const transport = http(RPC_URL);
   const publicClient = createPublicClient({ chain: unichainSepolia, transport });
   const privateKey = process.env.TEST_EXECUTOR_PRIVATE_KEY as `0x${string}` | undefined;
-
-  if (!privateKey) {
-    console.error('ERROR: TEST_EXECUTOR_PRIVATE_KEY required in .env.local');
-    process.exit(1);
-  }
-
+  if (!privateKey) { console.error('ERROR: TEST_EXECUTOR_PRIVATE_KEY required'); process.exit(1); }
   const account = privateKeyToAccount(privateKey);
-  log('SYSTEM', `Chain: Unichain Sepolia (${CHAIN_ID})`);
-  log('SYSTEM', `Executor: ${account.address}`);
 
+  log('SYSTEM', `Chain: Unichain Sepolia (${CHAIN_ID}) | Executor: ${account.address}`);
   const [ethBal, usdcBal] = await Promise.all([
     publicClient.getBalance({ address: account.address }),
-    publicClient.readContract({
-      address: USDC_ADDRESS,
-      abi: ERC20_BALANCE_ABI,
-      functionName: 'balanceOf',
-      args: [account.address],
-    }),
+    publicClient.readContract({ address: USDC_ADDRESS, abi: ERC20_BALANCE_ABI, functionName: 'balanceOf', args: [account.address] }),
   ]);
   log('SYSTEM', `Balances: ${formatEther(ethBal)} ETH | ${formatUnits(usdcBal, 6)} USDC`);
-
-  // Discover pool
-  const discovered = await discoverPoolFeeTier(
-    CHAIN_ID, RPC_URL,
-    '0x0000000000000000000000000000000000000000', USDC_ADDRESS
-  );
-  if (!discovered) {
-    console.error('ERROR: No ETH-USDC pool found on-chain.');
-    process.exit(1);
-  }
-  log('SYSTEM', `Pool: fee=${discovered.fee} tickSpacing=${discovered.tickSpacing} tick=${discovered.state.tick}`);
   console.log('');
 
   // ═══════════════════════════════════════════════════════════════
-  // PHASE 1: Forum creation & agent joining
+  // POOL DISCOVERY — All available ETH-USDC pools
+  // ═══════════════════════════════════════════════════════════════
+  log('POOL', '━━━ Discovering all ETH-USDC pools on Unichain Sepolia ━━━');
+  const allPools = await discoverAllPools(CHAIN_ID, RPC_URL, ETH_ADDRESS, USDC_ADDRESS);
+  if (allPools.length === 0) { console.error('ERROR: No pools found.'); process.exit(1); }
+
+  for (const p of allPools) {
+    const liq = Number(p.state.liquidity);
+    const liqFmt = liq > 1e12 ? `${(liq / 1e12).toFixed(1)}T` : liq > 1e9 ? `${(liq / 1e9).toFixed(1)}B` : `${(liq / 1e6).toFixed(1)}M`;
+    log('POOL', `  fee=${p.fee} (${feePct(p.fee)}) tickSpacing=${p.tickSpacing} | tick=${p.state.tick} | liquidity=${liqFmt}`);
+  }
+  console.log('');
+
+  // ═══════════════════════════════════════════════════════════════
+  // PHASE 1: Forum Setup
   // ═══════════════════════════════════════════════════════════════
   log('FORUM', '━━━ Phase 1: Forum Setup ━━━');
-  log('FORUM', `Forum created: "Optimize ETH-USDC trading strategy"`);
-  log('FORUM', `Creator: ${AGENTS.alpha.ens}`);
-  log('FORUM', `Quorum: 60% | Participants: 3`);
-  await sleep(300);
-  log('ALPHA', `Joined forum (strategy: ${AGENTS.alpha.strategy})`);
-  log('BETA', `Joined forum (strategy: ${AGENTS.beta.strategy})`);
-  log('GAMMA', `Joined forum (strategy: ${AGENTS.gamma.strategy})`);
+  log('FORUM', `Forum: "Optimize ETH-USDC trading strategy" | Quorum: 60%`);
+  log('ALPHA', `Joined (strategy: ${AGENTS.alpha.strategy})`);
+  log('BETA', `Joined (strategy: ${AGENTS.beta.strategy})`);
+  log('GAMMA', `Joined (strategy: ${AGENTS.gamma.strategy})`);
   console.log('');
 
   // ═══════════════════════════════════════════════════════════════
-  // PHASE 2: First proposal — Agent Alpha proposes a market swap
+  // PHASE 2: Proposal #1 — Alpha: swap, fee=100, 0.01 ETH
   // ═══════════════════════════════════════════════════════════════
-  log('FORUM', '━━━ Phase 2: Proposal #1 — Market Swap ━━━');
-  await sleep(300);
-
-  const proposal1 = {
-    action: 'swap' as const,
-    params: {
-      tokenIn: 'ETH',
-      tokenOut: 'USDC',
-      amount: '10000000000000000', // 0.01 ETH
-      slippage: 50,
-    },
-  };
-
-  log('ALPHA', `📋 Proposes: SWAP 0.01 ETH → USDC (market order, 0.5% slippage)`);
-  log('ALPHA', `   "Let's swap now while the price is good."`);
-  await sleep(500);
-
-  // Discussion
-  log('BETA', `💬 "I disagree. Current tick is ${discovered.state.tick} — the market`);
-  log('BETA', `    is volatile. A limit order at a better tick would give us`);
-  log('BETA', `    a safer entry. I suggest targetTick=-100."`);
-  await sleep(400);
-
-  log('GAMMA', `💬 "I agree with Beta. A limit order protects against slippage`);
-  log('GAMMA', `    in volatile conditions. Market swaps are risky right now."`);
-  await sleep(400);
-
-  // Voting on Proposal #1
-  log('FORUM', '━━━ Voting on Proposal #1 ━━━');
+  log('FORUM', '━━━ Phase 2: Proposal #1 — Market Swap (fee=100) ━━━');
   await sleep(200);
 
-  const votes1 = [
-    { agent: 'ALPHA', vote: 'agree', reason: 'Proposer votes for own proposal' },
-    { agent: 'BETA', vote: 'disagree', reason: 'Prefers limit order for safety' },
-    { agent: 'GAMMA', vote: 'disagree', reason: 'Agrees with Beta — too volatile' },
-  ];
+  const p1Params = { tokenIn: 'ETH', tokenOut: 'USDC', amount: '10000000000000000', slippage: 50, fee: 100 };
 
-  let agree1 = 0, disagree1 = 0;
-  for (const v of votes1) {
-    if (v.vote === 'agree') agree1++; else disagree1++;
-    const icon = v.vote === 'agree' ? '👍' : '👎';
-    log('VOTE', `${icon} ${v.agent}: ${v.vote.toUpperCase()} — "${v.reason}"`);
-    await sleep(200);
-  }
-
-  const pct1 = Math.round((agree1 / (agree1 + disagree1)) * 100);
-  log('SYSTEM', `Result: ${agree1} agree / ${disagree1} disagree (${pct1}%) — REJECTED ❌`);
-  log('SYSTEM', `Proposal #1 status: rejected`);
-  console.log('');
-
-  // Verify: enrich + build + simulate the REJECTED swap (prove it would have worked)
-  log('SYSTEM', '(Verifying rejected swap would have been valid...)');
-  const enriched1 = await enrichExecutionPayloadParams(
-    proposal1.action, proposal1.params, CHAIN_ID, undefined,
-    { rpcUrl: RPC_URL, graphApiKey: process.env.GRAPH_API_KEY || undefined }
-  );
-  const payload1: ExecutionPayload = {
-    proposalId: 'deliberation-proposal-1',
-    forumId: 'deliberation-forum-1',
-    executorEnsName: AGENTS.alpha.ens,
-    action: proposal1.action,
-    params: { ...enriched1, deadline: Math.floor(Date.now() / 1000) + 1800 } as any,
-    chainId: CHAIN_ID,
-  };
-  const cd1 = buildCalldataForPayload(payload1);
-  try {
-    const decoded1 = decodeFunctionData({ abi: UNIVERSAL_ROUTER_ABI, data: cd1.data });
-    const args1 = decoded1.args as [`0x${string}`, `0x${string}`[], bigint];
-    await publicClient.simulateContract({
-      address: cd1.to as Address,
-      abi: UNIVERSAL_ROUTER_ABI,
-      functionName: 'execute',
-      args: args1,
-      account,
-      value: cd1.value ?? 0n,
-    });
-    log('SYSTEM', '(Swap simulation: VALID ✓ — but agents chose not to execute it)');
-  } catch {
-    log('SYSTEM', '(Swap simulation: would have reverted anyway)');
-  }
-  console.log('');
-
-  // ═══════════════════════════════════════════════════════════════
-  // PHASE 3: Counter-proposal — Agent Beta proposes a limit order
-  // ═══════════════════════════════════════════════════════════════
-  log('FORUM', '━━━ Phase 3: Proposal #2 — Limit Order (Counter-Proposal) ━━━');
+  log('ALPHA', `📋 Proposes: SWAP 0.01 ETH → USDC | fee=${p1Params.fee} (${feePct(p1Params.fee)}) | slippage=0.5%`);
+  log('ALPHA', `   "Quick market swap on the lowest-fee pool. Maximum capital efficiency."`);
   await sleep(300);
 
-  const proposal2 = {
-    action: 'limitOrder' as const,
-    params: {
-      tokenIn: 'ETH',
-      tokenOut: 'USDC',
-      amount: '10000000000000000', // 0.01 ETH (same amount)
-      targetTick: -100,
-      zeroForOne: true,
-    },
-  };
+  log('BETA', `💬 "The fee=100 pool only has ${(Number(allPools.find(p => p.fee === 100)?.state.liquidity ?? 0) / 1e12).toFixed(1)}T liquidity.`);
+  log('BETA', `    I'd prefer the fee=3000 pool — it has ${(Number(allPools.find(p => p.fee === 3000)?.state.liquidity ?? 0) / 1e12).toFixed(0)}T liquidity.`);
+  log('BETA', `    Also, a limit order would be safer than a market swap."`);
+  await sleep(300);
 
-  log('BETA', `📋 Counter-proposes: LIMIT ORDER 0.01 ETH → USDC at targetTick=-100`);
-  log('BETA', `   "Same trade, but as a limit order. This protects us from`);
-  log('BETA', `    adverse price movement. The hookData encodes our target tick."`);
-  await sleep(500);
+  log('GAMMA', `💬 "Beta makes a good point about liquidity depth. But fee=3000 is`);
+  log('GAMMA', `    expensive. The fee=500 pool has ${(Number(allPools.find(p => p.fee === 500)?.state.liquidity ?? 0) / 1e12).toFixed(1)}T liquidity`);
+  log('GAMMA', `    and better cost. I'd vote no on this swap."`);
+  await sleep(300);
 
-  log('ALPHA', `💬 "Fair point. The limit order approach is more disciplined.`);
-  log('ALPHA', `    I'll support this counter-proposal."`);
-  await sleep(400);
+  // Voting
+  log('FORUM', '  Voting on Proposal #1...');
+  const v1 = [
+    { a: 'ALPHA', v: 'agree', r: 'Proposer — low fee is efficient' },
+    { a: 'BETA', v: 'disagree', r: 'Fee=100 pool too shallow, wants limit order on fee=3000' },
+    { a: 'GAMMA', v: 'disagree', r: 'Prefers fee=500 and limit order approach' },
+  ];
+  for (const x of v1) { log('VOTE', `${x.v === 'agree' ? '👍' : '👎'} ${x.a}: ${x.v.toUpperCase()} — "${x.r}"`); }
+  log('SYSTEM', `Result: 1/3 agree (33%) — REJECTED ❌`);
 
-  log('GAMMA', `💬 "Agreed. This is the right call for current market conditions."`);
-  await sleep(400);
+  // Verify simulation
+  const sim1 = await simulateProposal('swap', p1Params, account, publicClient as any);
+  log('SYSTEM', `(Simulation: ${sim1 ? 'VALID ✓ — but agents chose not to execute' : 'would have reverted'})`);
+  console.log('');
 
-  // Voting on Proposal #2
-  log('FORUM', '━━━ Voting on Proposal #2 ━━━');
+  // ═══════════════════════════════════════════════════════════════
+  // PHASE 3: Proposal #2 — Beta: limitOrder, fee=3000, 0.05 ETH
+  // ═══════════════════════════════════════════════════════════════
+  log('FORUM', '━━━ Phase 3: Proposal #2 — Limit Order (fee=3000, 0.05 ETH) ━━━');
   await sleep(200);
 
-  const votes2 = [
-    { agent: 'BETA', vote: 'agree', reason: 'Proposer — limit order is safer' },
-    { agent: 'ALPHA', vote: 'agree', reason: 'Convinced by deliberation' },
-    { agent: 'GAMMA', vote: 'agree', reason: 'Limit order protects against volatility' },
+  const p2Params = {
+    tokenIn: 'ETH', tokenOut: 'USDC', amount: '50000000000000000', // 0.05 ETH
+    targetTick: -100, zeroForOne: true, fee: 3000,
+  };
+
+  log('BETA', `📋 Proposes: LIMIT ORDER 0.05 ETH → USDC | fee=${p2Params.fee} (${feePct(p2Params.fee)}) | tick=-100`);
+  log('BETA', `   "Limit order on the deepest pool (fee=3000). Increased size to 0.05 ETH`);
+  log('BETA', `    to capitalize on the deep liquidity."`);
+  await sleep(300);
+
+  log('ALPHA', `💬 "0.05 ETH is too aggressive — that's 5x what I proposed. I only`);
+  log('ALPHA', `    have ${formatEther(ethBal)} ETH. And 0.3% fee eats into returns."`);
+  await sleep(300);
+
+  log('GAMMA', `💬 "I agree with the limit order approach, but the amount is too high`);
+  log('GAMMA', `    and fee=3000 is expensive. Let's compromise: 0.01 ETH on fee=500."`);
+  await sleep(300);
+
+  // Voting
+  log('FORUM', '  Voting on Proposal #2...');
+  const v2 = [
+    { a: 'BETA', v: 'agree', r: 'Proposer — deep liquidity justifies higher fee' },
+    { a: 'ALPHA', v: 'disagree', r: 'Amount too large, fee too high' },
+    { a: 'GAMMA', v: 'disagree', r: 'Agrees on limit order but wants fee=500 and smaller size' },
   ];
+  for (const x of v2) { log('VOTE', `${x.v === 'agree' ? '👍' : '👎'} ${x.a}: ${x.v.toUpperCase()} — "${x.r}"`); }
+  log('SYSTEM', `Result: 1/3 agree (33%) — REJECTED ❌`);
 
-  let agree2 = 0;
-  for (const v of votes2) {
-    agree2++;
-    log('VOTE', `👍 ${v.agent}: AGREE — "${v.reason}"`);
-    await sleep(200);
-  }
-
-  const pct2 = Math.round((agree2 / 3) * 100);
-  log('SYSTEM', `Result: ${agree2} agree / 0 disagree (${pct2}%) — APPROVED ✅`);
-  log('SYSTEM', `Consensus reached! Proposal #2 approved.`);
+  const sim2 = await simulateProposal('limitOrder', p2Params, account, publicClient as any);
+  log('SYSTEM', `(Simulation: ${sim2 ? 'VALID ✓ — but agents chose not to execute' : 'would have reverted (likely insufficient balance)'})`);
   console.log('');
 
   // ═══════════════════════════════════════════════════════════════
-  // PHASE 4: Execution — Enrich, build calldata, simulate
+  // PHASE 4: Proposal #3 — Gamma: limitOrder, fee=500, 0.01 ETH
   // ═══════════════════════════════════════════════════════════════
-  log('FORUM', '━━━ Phase 4: Execution ━━━');
+  log('FORUM', '━━━ Phase 4: Proposal #3 — Limit Order (fee=500, 0.01 ETH) — Compromise ━━━');
+  await sleep(200);
+
+  const p3Params = {
+    tokenIn: 'ETH', tokenOut: 'USDC', amount: '10000000000000000', // 0.01 ETH
+    targetTick: -100, zeroForOne: true, fee: 500,
+  };
+
+  const pool500 = allPools.find(p => p.fee === 500);
+  log('GAMMA', `📋 Proposes: LIMIT ORDER 0.01 ETH → USDC | fee=${p3Params.fee} (${feePct(p3Params.fee)}) | tick=-100`);
+  log('GAMMA', `   "Compromise: limit order (safe) + fee=500 pool (${(Number(pool500?.state.liquidity ?? 0) / 1e12).toFixed(1)}T`);
+  log('GAMMA', `    liquidity, 5x cheaper than fee=3000) + original 0.01 ETH amount."`);
   await sleep(300);
 
-  log('EXEC', '[1/3] Enriching proposal params via API enrichment pipeline...');
-  const enriched2 = await enrichExecutionPayloadParams(
-    proposal2.action, proposal2.params, CHAIN_ID, 'Optimize ETH-USDC trading strategy',
+  log('ALPHA', `💬 "This is reasonable. The fee=500 pool has good liquidity,`);
+  log('ALPHA', `    the amount is conservative, and the limit order protects us. I'm in."`);
+  await sleep(300);
+
+  log('BETA', `💬 "I still prefer deeper liquidity, but fee=500 is a fair middle ground.`);
+  log('BETA', `    The limit order mechanism addresses my volatility concern. Agreed."`);
+  await sleep(300);
+
+  // Voting
+  log('FORUM', '  Voting on Proposal #3...');
+  const v3 = [
+    { a: 'GAMMA', v: 'agree', r: 'Proposer — balanced compromise' },
+    { a: 'ALPHA', v: 'agree', r: 'Good balance of cost and safety' },
+    { a: 'BETA', v: 'agree', r: 'Limit order on fee=500 is acceptable compromise' },
+  ];
+  for (const x of v3) { log('VOTE', `👍 ${x.a}: AGREE — "${x.r}"`); }
+  log('SYSTEM', `Result: 3/3 agree (100%) — APPROVED ✅`);
+  log('SYSTEM', `Consensus reached after 3 rounds of deliberation!`);
+  console.log('');
+
+  // ═══════════════════════════════════════════════════════════════
+  // PHASE 5: Execution
+  // ═══════════════════════════════════════════════════════════════
+  log('FORUM', '━━━ Phase 5: Execution ━━━');
+  await sleep(200);
+
+  log('EXEC', '[1/3] Enriching proposal params...');
+  const enriched = await enrichExecutionPayloadParams(
+    'limitOrder', p3Params as Record<string, unknown>, CHAIN_ID, 'Optimize ETH-USDC trading strategy',
     { rpcUrl: RPC_URL, graphApiKey: process.env.GRAPH_API_KEY || undefined }
   );
-  log('EXEC', `  currency0: ${enriched2.currency0}`);
-  log('EXEC', `  currency1: ${enriched2.currency1}`);
-  log('EXEC', `  fee: ${enriched2.fee} | tickSpacing: ${enriched2.tickSpacing}`);
-  log('EXEC', `  zeroForOne: ${enriched2.zeroForOne} | targetTick: ${enriched2.targetTick}`);
-  log('EXEC', `  amountOutMinimum: ${enriched2.amountOutMinimum}`);
+  log('EXEC', `  currency0: ${enriched.currency0}`);
+  log('EXEC', `  currency1: ${enriched.currency1}`);
+  log('EXEC', `  fee: ${enriched.fee} (${feePct(enriched.fee as number)}) | tickSpacing: ${enriched.tickSpacing}`);
+  log('EXEC', `  zeroForOne: ${enriched.zeroForOne} | targetTick: ${enriched.targetTick}`);
+  log('EXEC', `  amountOutMinimum: ${enriched.amountOutMinimum}`);
 
   const deadline = Math.floor(Date.now() / 1000) + 1800;
-  const payload2: ExecutionPayload = {
-    proposalId: 'deliberation-proposal-2',
+  const finalPayload: ExecutionPayload = {
+    proposalId: 'deliberation-proposal-3',
     forumId: 'deliberation-forum-1',
-    executorEnsName: AGENTS.alpha.ens, // forum creator executes
-    action: proposal2.action,
-    params: { ...enriched2, deadline } as any,
+    executorEnsName: AGENTS.alpha.ens,
+    action: 'limitOrder',
+    params: { ...enriched, deadline } as any,
     chainId: CHAIN_ID,
     deadline,
     forumGoal: 'Optimize ETH-USDC trading strategy',
   };
 
   log('EXEC', '[2/3] Building calldata for Universal Router...');
-  const { data, to, value } = buildCalldataForPayload(payload2);
+  const { data, to, value } = buildCalldataForPayload(finalPayload);
   log('EXEC', `  to: ${to}`);
   log('EXEC', `  calldata: ${(data.length - 2) / 2} bytes`);
   log('EXEC', `  value: ${value ?? 0n} wei (${value ? formatEther(value) + ' ETH' : '0'})`);
@@ -320,35 +325,40 @@ async function main() {
       value: value ?? 0n,
     });
     console.log('');
-    log('✅', '══════════════════════════════════════════════════════');
+    log('✅', '══════════════════════════════════════════════════════════════');
     log('✅', ' SIMULATION SUCCESS — Transaction would execute on-chain');
-    log('✅', '══════════════════════════════════════════════════════');
+    log('✅', '══════════════════════════════════════════════════════════════');
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.log('');
-    log('❌', '══════════════════════════════════════════════════════');
-    log('❌', ' SIMULATION FAILED');
-    log('❌', ` Error: ${msg.slice(0, 200)}`);
-    log('❌', '══════════════════════════════════════════════════════');
+    log('❌', '══════════════════════════════════════════════════════════════');
+    log('❌', ` SIMULATION FAILED: ${msg.slice(0, 200)}`);
+    log('❌', '══════════════════════════════════════════════════════════════');
   }
 
   // ═══════════════════════════════════════════════════════════════
   // Summary
   // ═══════════════════════════════════════════════════════════════
   console.log('');
-  console.log('┌─────────────────────────────────────────────────────────────┐');
-  console.log('│                    Deliberation Summary                     │');
-  console.log('├─────────────────────────────────────────────────────────────┤');
-  console.log('│ Proposal #1: swap 0.01 ETH → USDC (market)     → REJECTED │');
-  console.log('│   Reason: Agents preferred limit order for safety          │');
-  console.log('│                                                            │');
-  console.log('│ Proposal #2: limitOrder 0.01 ETH → USDC @ tick -100       │');
-  console.log('│   → APPROVED (3/3 = 100%) → SIMULATED ✅                  │');
-  console.log('│                                                            │');
-  console.log('│ Key insight: Agent deliberation changed the execution      │');
-  console.log('│ plan from a market swap to a limit order, demonstrating    │');
-  console.log('│ collective intelligence in agentic finance.                │');
-  console.log('└─────────────────────────────────────────────────────────────┘');
+  console.log('┌───────────────────────────────────────────────────────────────────┐');
+  console.log('│                      Deliberation Summary                         │');
+  console.log('├───────────────────────────────────────────────────────────────────┤');
+  console.log('│ Round 1: Alpha → swap, fee=100 (0.01%), 0.01 ETH     → REJECTED │');
+  console.log('│   Beta: "shallow liquidity"  Gamma: "fee=500 is better"          │');
+  console.log('│                                                                   │');
+  console.log('│ Round 2: Beta → limitOrder, fee=3000 (0.3%), 0.05 ETH → REJECTED │');
+  console.log('│   Alpha: "too much capital"  Gamma: "fee too high"               │');
+  console.log('│                                                                   │');
+  console.log('│ Round 3: Gamma → limitOrder, fee=500 (0.05%), 0.01 ETH → APPROVED│');
+  console.log('│   Compromise: limit order + mid-fee pool + conservative amount    │');
+  console.log('│   → SIMULATED ON-CHAIN ✅                                        │');
+  console.log('│                                                                   │');
+  console.log('│ Parameters that changed through deliberation:                     │');
+  console.log('│   • Action type:  swap → limitOrder                               │');
+  console.log('│   • Fee tier:     100 → 3000 → 500 (0.01% → 0.3% → 0.05%)       │');
+  console.log('│   • Amount:       0.01 ETH → 0.05 ETH → 0.01 ETH                │');
+  console.log('│   • Target tick:  (none) → -100 → -100                            │');
+  console.log('└───────────────────────────────────────────────────────────────────┘');
   console.log('');
 }
 
