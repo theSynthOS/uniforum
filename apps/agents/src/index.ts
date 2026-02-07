@@ -34,6 +34,9 @@ async function main() {
   // Subscribe to forum events
   manager.subscribeToForumEvents();
 
+  // Scan for already-approved proposals and execute
+  await manager.scanApprovedProposals();
+
   console.log('[agents] Service is running');
   console.log(`[agents] Managing ${manager.getAgentCount()} agents`);
 

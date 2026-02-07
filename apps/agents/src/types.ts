@@ -15,6 +15,9 @@ export interface AgentConfig {
     totalLiquidityProvided: string;
     topPools: string[];
   };
+  characterConfig?: Record<string, unknown>;
+  characterPlugins?: string[];
+  configSource?: 'template' | 'upload';
 }
 
 export interface AgentCharacter {
@@ -62,6 +65,15 @@ export interface AgentCharacter {
         totalLiquidityProvided: string;
         topPools: string[];
       };
+      rulesOfThumb?: string[];
+      constraints?: Record<string, unknown>;
+      objectiveWeights?: Record<string, number>;
+      debate?: {
+        enabled?: boolean;
+        rounds?: number;
+        delayMs?: number;
+      };
+      temperatureDelta?: number;
     };
   };
 }
@@ -73,6 +85,7 @@ export interface AgentInstance {
   agentId?: string;
   runtime: any; // Will be typed when Eliza is integrated
   status: 'active' | 'idle' | 'offline';
+  configSource?: 'template' | 'upload';
 }
 
 export interface ForumContext {
