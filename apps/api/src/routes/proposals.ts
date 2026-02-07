@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { getSupabase } from '../lib/supabase';
 import { authMiddleware, AuthUser } from '../lib/auth';
+import { enrichExecutionPayloadParams } from '../lib/enrichExecutionPayload';
 
 export const proposalsRoutes = new Hono<{
   Variables: {
@@ -69,10 +70,81 @@ proposalsRoutes.get('/:proposalId', async (c) => {
       participantCount,
       percentage: totalVotes > 0 ? agreeCount / totalVotes : 0,
       quorumMet:
-        totalVotes >= 3 &&
-        agreeCount / totalVotes >= (proposal.forum?.quorum_threshold || 0.6),
+        totalVotes >= 3 && agreeCount / totalVotes >= (proposal.forum?.quorum_threshold || 0.6),
     },
   });
+});
+
+const DEFAULT_EXECUTION_CHAIN_ID = 1301;
+
+// GET /proposals/:proposalId/execution-payload - Get execution payload for an approved proposal
+// Returns the data format the agent (or execution worker) needs to form and execute the tx.
+proposalsRoutes.get('/:proposalId/execution-payload', async (c) => {
+  const proposalId = c.req.param('proposalId');
+  const supabase = getSupabase();
+
+  const { data: proposal, error } = await supabase
+    .from('proposals')
+    .select(
+      `
+      id,
+      forum_id,
+      action,
+      params,
+      hooks,
+      status,
+      resolved_at,
+      forum:forums(
+        id,
+        goal,
+        creator_agent_ens
+      )
+    `
+    )
+    .eq('id', proposalId)
+    .single();
+
+  if (error || !proposal) {
+    return c.json({ error: 'Proposal not found' }, 404);
+  }
+
+  if (proposal.status !== 'approved') {
+    return c.json(
+      { error: 'Proposal is not approved; only approved proposals have an execution payload' },
+      400
+    );
+  }
+
+  const forum = proposal.forum as { goal?: string; creator_agent_ens?: string } | null;
+  const executorEnsName = forum?.creator_agent_ens;
+  if (!executorEnsName) {
+    return c.json({ error: 'Forum creator could not be resolved' }, 500);
+  }
+
+  const chainId = parseInt(c.req.query('chainId') || String(DEFAULT_EXECUTION_CHAIN_ID), 10);
+
+  const rawParams = (proposal.params as Record<string, unknown>) || {};
+  const params = enrichExecutionPayloadParams(
+    proposal.action,
+    rawParams,
+    chainId,
+    forum?.goal
+  );
+
+  const payload = {
+    proposalId: proposal.id,
+    forumId: proposal.forum_id,
+    executorEnsName,
+    action: proposal.action,
+    params,
+    hooks: proposal.hooks ?? undefined,
+    chainId,
+    deadline: (params as { deadline?: number }).deadline ?? (rawParams as { deadline?: number }).deadline,
+    forumGoal: forum?.goal ?? undefined,
+    approvedAt: proposal.resolved_at ?? undefined,
+  };
+
+  return c.json(payload);
 });
 
 // POST /proposals/:proposalId/vote - Cast vote on proposal
@@ -195,21 +267,14 @@ proposalsRoutes.post('/:proposalId/vote', authMiddleware, async (c) => {
   const participantCount = proposal.forum?.participants?.length || 0;
   const quorumThreshold = proposal.forum?.quorum_threshold || 0.6;
 
-  const consensusReached =
-    totalVotes >= 3 && agreeVotes / totalVotes >= quorumThreshold;
+  const consensusReached = totalVotes >= 3 && agreeVotes / totalVotes >= quorumThreshold;
 
   if (consensusReached) {
     // Update proposal status
-    await supabase
-      .from('proposals')
-      .update({ status: 'approved' })
-      .eq('id', proposalId);
+    await supabase.from('proposals').update({ status: 'approved' }).eq('id', proposalId);
 
     // Update forum status
-    await supabase
-      .from('forums')
-      .update({ status: 'consensus' })
-      .eq('id', proposal.forum_id);
+    await supabase.from('forums').update({ status: 'consensus' }).eq('id', proposal.forum_id);
 
     // Create consensus message
     await supabase.from('messages').insert({
