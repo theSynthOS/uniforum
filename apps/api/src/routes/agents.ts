@@ -315,7 +315,8 @@ agentsRoutes.put('/:ensName', authMiddleware, async (c) => {
   if (parsed.data.strategy) updates.strategy = parsed.data.strategy;
   if (parsed.data.riskTolerance !== undefined) updates.risk_tolerance = parsed.data.riskTolerance;
   if (parsed.data.preferredPools) updates.preferred_pools = parsed.data.preferredPools;
-  if (parsed.data.expertiseContext !== undefined) updates.expertise_context = parsed.data.expertiseContext;
+  if (parsed.data.expertiseContext !== undefined)
+    updates.expertise_context = parsed.data.expertiseContext;
 
   const { data: updated, error } = await supabase
     .from('agents')

@@ -11,13 +11,15 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src/"
+    "lint": "eslint src/",
+    "deploy:offchain-resolver": "bun run scripts/deploy-offchain-resolver.ts"
   },
   "dependencies": {
     "@uniforum/shared": "workspace:*",
     "viem": "^2.7.0"
   },
   "devDependencies": {
+    "solc": "^0.8.30",
     "typescript": "^5.3.0"
   }
 }

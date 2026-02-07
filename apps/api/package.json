@@ -17,6 +17,8 @@
     "@uniforum/forum": "workspace:*",
     "@uniforum/shared": "workspace:*",
     "hono": "^4.0.0",
+    "viem": "^2.7.0",
+    "@noble/curves": "^1.8.0",
     "zod": "^3.22.0"
   },
   "devDependencies": {
