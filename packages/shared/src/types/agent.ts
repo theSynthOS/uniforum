@@ -38,6 +38,14 @@ export const createAgentSchema = z.object({
 
 export type CreateAgentInput = z.infer<typeof createAgentSchema>;
 
+// Zod schema for agent creation with uploaded character config
+export const uploadAgentSchema = createAgentSchema.extend({
+  characterConfig: z.record(z.any()),
+  plugins: z.array(z.string()).optional(),
+});
+
+export type UploadAgentInput = z.infer<typeof uploadAgentSchema>;
+
 // Agent interface (for API responses)
 export interface Agent {
   id: string;
@@ -53,6 +61,8 @@ export interface Agent {
   status: AgentStatus;
   createdAt: string;
   lastActiveAt: string;
+  configSource?: 'template' | 'upload';
+  characterPlugins?: string[];
 }
 
 // Agent with metrics (for detailed views)

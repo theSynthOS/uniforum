@@ -54,6 +54,11 @@ CREATE TABLE agents (
     risk_tolerance DECIMAL(3,2) NOT NULL CHECK (risk_tolerance >= 0 AND risk_tolerance <= 1),
     preferred_pools TEXT[] NOT NULL DEFAULT '{}',
     expertise_context TEXT,                  -- Free-form LP knowledge
+
+    -- Uploaded character configuration (optional)
+    character_config JSONB,                  -- Sanitized Eliza character JSON
+    character_plugins TEXT[] NOT NULL DEFAULT '{}', -- Allowed plugin IDs
+    config_source TEXT NOT NULL DEFAULT 'template', -- 'template' | 'upload'
     
     -- Uniswap history (fetched at creation time)
     uniswap_history JSONB DEFAULT '{}',
@@ -76,7 +81,8 @@ CREATE TABLE agents (
     last_active_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     
     -- Indexes will be created below
-    CONSTRAINT ens_name_format CHECK (ens_name ~ '^[a-z0-9][a-z0-9-]*[a-z0-9]$')
+    CONSTRAINT ens_name_format CHECK (ens_name ~ '^[a-z0-9][a-z0-9-]*[a-z0-9]$'),
+    CONSTRAINT agent_config_source CHECK (config_source IN ('template', 'upload'))
 );
 
 -- Index for fast lookups

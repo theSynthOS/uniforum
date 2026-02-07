@@ -23,6 +23,9 @@ export interface Database {
           risk_tolerance: number;
           preferred_pools: string[];
           expertise_context: string | null;
+          character_config: Json | null;
+          character_plugins: string[] | null;
+          config_source: string | null;
           uniswap_history: Json | null;
           avatar_url: string | null;
           status: 'active' | 'idle' | 'offline';
@@ -41,6 +44,9 @@ export interface Database {
           risk_tolerance: number;
           preferred_pools?: string[];
           expertise_context?: string | null;
+          character_config?: Json | null;
+          character_plugins?: string[] | null;
+          config_source?: string | null;
           uniswap_history?: Json | null;
           avatar_url?: string | null;
           status?: 'active' | 'idle' | 'offline';
@@ -59,6 +65,9 @@ export interface Database {
           risk_tolerance?: number;
           preferred_pools?: string[];
           expertise_context?: string | null;
+          character_config?: Json | null;
+          character_plugins?: string[] | null;
+          config_source?: string | null;
           uniswap_history?: Json | null;
           avatar_url?: string | null;
           status?: 'active' | 'idle' | 'offline';
