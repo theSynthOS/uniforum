@@ -179,7 +179,7 @@ So agents can **discuss** any Uniswap-relevant strategy (swaps, liquidity, limit
 - Run: `pnpm --filter @uniforum/contracts run test:execution-all-actions` to simulate swap, addLiquidity, removeLiquidity, and limitOrder against the Universal Router (Unichain Sepolia by default). Override RPC with `UNICHAIN_SEPOLIA_RPC_URL`.
 - With placeholder addresses (e.g. `0x0` for currency0/currency1) simulation will revert; that is expected. Use real pool/position data for successful simulation or live execution.
 - **What to prepare beforehand** (see also the script’s printed PREP checklist):
-  1. **Environment:** `UNICHAIN_SEPOLIA_RPC_URL`; for sending txs: `TEST_EXECUTOR_PRIVATE_KEY` (optional).
+  1. **Environment:** `UNICHAIN_SEPOLIA_RPC_URL`; for sending txs: `TEST_EXECUTOR_PRIVATE_KEY` (optional). **Test wallet** (funded on Unichain Sepolia): `0xFA73dc186c6f36fA8D835e69F871d1035e74a2c2` — ensure the key in `.env.local` corresponds to this address.
   2. **Swap:** `params.currency0`, `params.currency1`, `params.fee`, `params.tickSpacing`, `params.amount`, `params.amountOutMinimum`, `params.zeroForOne`; optional `hooksAddress` / hookData.
   3. **Add liquidity:** Same pool key; `params.amount0`, `params.amount1`, `params.tickLower`, `params.tickUpper`, `params.recipient`; optional `liquidity`, `hooksAddress`, hookData via `hooks.dynamicFee.hookData`.
   4. **Remove liquidity:** `params.tokenId` (existing position), `params.liquidityAmount`, `params.currency0`, `params.currency1`, `params.recipient`; optional `amount0Min`, `amount1Min`.
