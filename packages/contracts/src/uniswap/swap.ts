@@ -1,15 +1,23 @@
 /**
  * Uniswap v4 Swap Operations
  *
- * Execute swaps via Universal Router on Unichain.
+ * Execute swaps via Universal Router on Unichain per official docs:
+ * - Single-hop: https://docs.uniswap.org/sdk/v4/guides/swaps/single-hop-swapping
+ * - Technical ref: https://docs.uniswap.org/contracts/universal-router/technical-reference (V4_SWAP = 0x10)
  */
 
-import type { Address, Hash } from 'viem';
-import { encodeFunctionData, parseUnits } from 'viem';
+import type { Hash } from 'viem';
+import { unichainSepolia, unichainMainnet } from '../chains';
 import { createUniswapClients, getUniswapAddresses } from './client';
-import type { SwapParams } from '@uniforum/shared';
+import { buildV4SingleHopSwapCalldata } from './v4SwapCalldata';
+import type { SwapParams, ProposalHooks } from '@uniforum/shared';
 
-// Universal Router ABI (simplified - add full ABI in production)
+/** True if address is configured (42-char hex), not a placeholder like 0x... */
+function isConfiguredAddress(addr: string): boolean {
+  return /^0x[0-9a-fA-F]{40}$/.test(addr);
+}
+
+// Universal Router ABI (execute with deadline per technical reference)
 const UNIVERSAL_ROUTER_ABI = [
   {
     inputs: [
@@ -24,16 +32,24 @@ const UNIVERSAL_ROUTER_ABI = [
   },
 ] as const;
 
-// Command bytes for Universal Router
-const COMMANDS = {
-  V4_SWAP: 0x00,
-  WRAP_ETH: 0x0b,
-  UNWRAP_WETH: 0x0c,
-} as const;
+/** Extended swap params: execution payload may include v4 pool key + amountOutMinimum + hookData for SDK encoding */
+export type SwapParamsWithV4 = SwapParams & {
+  currency0?: string;
+  currency1?: string;
+  fee?: number;
+  tickSpacing?: number;
+  amountOutMinimum?: string;
+  hooksAddress?: string;
+  /** true = sell currency0 for currency1; false = sell currency1 for currency0. Default true. */
+  zeroForOne?: boolean;
+  /** Optional hook data (e.g. for LimitOrderHook: targetTick, zeroForOne). */
+  hookData?: string;
+};
 
 export interface ExecuteSwapOptions {
   privateKey: `0x${string}`;
   params: SwapParams;
+  hooks?: ProposalHooks;
   chainId?: number;
 }
 
@@ -44,46 +60,76 @@ export interface SwapResult {
 }
 
 /**
- * Execute a swap on Uniswap v4 via Universal Router
+ * Execute a swap on Uniswap v4 via Universal Router.
+ * Params must include v4 pool key (currency0, currency1, fee, tickSpacing) and amountOutMinimum
+ * when using the real Universal Router; these can be provided by the execution payload (e.g. from a quote).
  */
 export async function executeSwap(options: ExecuteSwapOptions): Promise<SwapResult> {
   const { privateKey, params, chainId = 1301 } = options;
+  const swapParams = params as SwapParamsWithV4;
 
   try {
-    const { publicClient, walletClient, account, addresses } = createUniswapClients(
-      privateKey,
-      chainId === 1301 ? undefined : undefined // Add chain selection
-    );
+    const addresses = getUniswapAddresses(chainId);
+    if (!isConfiguredAddress(addresses.universalRouter)) {
+      return {
+        success: false,
+        error:
+          'Universal Router not configured; set UNISWAP_V4_ADDRESSES for this chain and use real swap encoding (e.g. v4 SDK)',
+      };
+    }
 
-    // Calculate deadline (default 30 minutes)
-    const deadline = BigInt(params.deadline || Math.floor(Date.now() / 1000) + 1800);
+    const chain = chainId === 130 ? unichainMainnet : unichainSepolia;
+    const { publicClient, walletClient, account } = createUniswapClients(privateKey, chain);
 
-    // TODO: Build proper swap calldata based on params
-    // This is a placeholder - actual implementation needs:
-    // 1. Pool key construction
-    // 2. Swap path encoding
-    // 3. Amount calculations with slippage
-    // 4. Universal Router command encoding
+    const deadline = BigInt(swapParams.deadline || Math.floor(Date.now() / 1000) + 1800);
 
-    const commands = '0x00'; // V4_SWAP command
-    const inputs: `0x${string}`[] = [
-      // Encoded swap parameters
-      '0x' as `0x${string}`,
-    ];
+    let commands: `0x${string}`;
+    let inputs: `0x${string}`[];
+    const zeroForOne = swapParams.zeroForOne ?? true;
+    const hasV4PoolKey =
+      swapParams.currency0 &&
+      swapParams.currency1 &&
+      typeof swapParams.fee === 'number' &&
+      typeof swapParams.tickSpacing === 'number' &&
+      swapParams.amountOutMinimum != null;
 
-    // Simulate transaction first
+    if (hasV4PoolKey) {
+      const { commands: c, inputs: i } = buildV4SingleHopSwapCalldata({
+        poolKey: {
+          currency0: swapParams.currency0!,
+          currency1: swapParams.currency1!,
+          fee: swapParams.fee!,
+          tickSpacing: swapParams.tickSpacing!,
+          hooks: swapParams.hooksAddress,
+        },
+        zeroForOne,
+        amountIn: swapParams.amount,
+        amountOutMinimum: swapParams.amountOutMinimum!,
+        hookData: swapParams.hookData,
+      });
+      commands = c;
+      inputs = i;
+    } else {
+      return {
+        success: false,
+        error:
+          'Swap execution requires v4 pool key and minimum out: include currency0, currency1, fee, tickSpacing, amountOutMinimum in execution payload (e.g. from quote or config)',
+      };
+    }
+
+    // When input is native ETH (zeroForOne and tokenIn is ETH), send amountIn as value
+    const value =
+      zeroForOne && swapParams.tokenIn?.toUpperCase() === 'ETH' ? BigInt(swapParams.amount) : 0n;
     const { request } = await publicClient.simulateContract({
-      address: addresses.universalRouter,
+      address: addresses.universalRouter as `0x${string}`,
       abi: UNIVERSAL_ROUTER_ABI,
       functionName: 'execute',
-      args: [commands as `0x${string}`, inputs, deadline],
+      args: [commands, inputs, deadline],
       account,
+      value,
     });
 
-    // Execute transaction
     const txHash = await walletClient.writeContract(request);
-
-    // Wait for confirmation
     const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
 
     return {
