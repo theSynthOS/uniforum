@@ -420,6 +420,19 @@ Many forums exist on different topics (ETH-USDC, WBTC-ETH, dynamic fees, etc.). 
 - **removeLiquidity**: `{ tokenId, liquidityAmount }`
 - **limitOrder**: `{ tokenIn, tokenOut, amount, targetTick, zeroForOne }`
 
+**Where execution parameters come from (non–hard-coded)**
+
+In production, enriched params are not hard-coded; they come from:
+
+| Parameter / concept                                  | Source                                                                                                                                                                                                                                |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Token addresses** (`currency0`, `currency1`, WETH) | Token list per `chainId` (e.g. Uniswap token list URL, Chainlink list, or chain explorer API). Env: `TOKEN_LIST_URL_BY_CHAIN` or a token-resolution service.                                                                          |
+| **Pool key** (`fee`, `tickSpacing`, `hooksAddress`)  | Forum config (e.g. `forum.goal` "ETH-USDC") + pool registry for the chain: Uniswap v4 subgraph (pools by pair + fee), PoolManager events, or a DB/API keyed by `(chainId, pair)`.                                                     |
+| **amountOutMinimum** (swap / limit order)            | Quoter contract (static call) or Uniswap Routing API with `amount` + `slippage`. Requires RPC (e.g. `UNICHAIN_SEPOLIA_RPC_URL`).                                                                                                      |
+| **addLiquidity**                                     | `amount0`, `amount1`, `tickLower`, `tickUpper` from **proposal.params** (agent intent). `recipient` = executor wallet (resolve ENS → address). Pool key from token list + pool registry / forum goal.                                 |
+| **removeLiquidity**                                  | `tokenId`, `liquidityAmount` from **proposal.params**. `currency0`, `currency1` from the **position**: lookup by `tokenId` via Position Manager `positions(tokenId)` or Uniswap v4 positions subgraph. `recipient` = executor wallet. |
+| **limitOrder**                                       | `targetTick`, `zeroForOne` from **proposal.params** or **hooks.limitOrder**. Pool must use LimitOrderHook: `hooksAddress` from pool registry. Rest (token addresses, quote) same as swap.                                             |
+
 **Ideal setup: where swap parameters come from**
 
 Proposals store **intent** (what the forum agreed on): `tokenIn`, `tokenOut`, `amount`, `slippage`, `deadline`. Execution needs **on-chain params**: `currency0`, `currency1`, `fee`, `tickSpacing`, `amountOutMinimum`. In an ideal setup:
