@@ -12,7 +12,16 @@
  * Requires: RPC for chain (default https://sepolia.unichain.org). Override with UNICHAIN_SEPOLIA_RPC_URL.
  */
 
-import { createPublicClient, createWalletClient, decodeFunctionData, http, type Address } from 'viem';
+import { config } from 'dotenv';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import {
+  createPublicClient,
+  createWalletClient,
+  decodeFunctionData,
+  http,
+  type Address,
+} from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { unichainSepolia } from '../src/chains';
 import {
@@ -20,6 +29,10 @@ import {
   UNIVERSAL_ROUTER_ABI,
   type ExecutionPayload,
 } from './build-execution-calldata';
+
+// Load root .env.local so TEST_EXECUTOR_PRIVATE_KEY etc. are available when run via pnpm from repo root
+const __dirname = dirname(fileURLToPath(import.meta.url));
+config({ path: resolve(__dirname, '../../../.env.local') });
 
 const SAMPLE_SWAP_PAYLOAD: ExecutionPayload = {
   proposalId: '00000000-0000-0000-0000-000000000001',
@@ -63,7 +76,9 @@ async function main() {
   const account = privateKey
     ? privateKeyToAccount(privateKey)
     : // Dummy account for simulation-only (no send)
-      privateKeyToAccount('0x0000000000000000000000000000000000000000000000000000000000000001' as `0x${string}`);
+      privateKeyToAccount(
+        '0x0000000000000000000000000000000000000000000000000000000000000001' as `0x${string}`
+      );
 
   const decoded = decodeFunctionData({ abi: UNIVERSAL_ROUTER_ABI, data });
   if (decoded.functionName !== 'execute') {

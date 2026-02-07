@@ -9,30 +9,34 @@
 
 import { getQuoteExactInputSingle } from '@uniforum/contracts';
 
-/** Uniswap v4 subgraph id (Unichain) – used when only GRAPH_API_KEY is set */
+/** Uniswap v4 subgraph id (Unichain) – official from https://docs.uniswap.org/api/subgraph/overview */
 const UNISWAP_V4_SUBGRAPH_ID_UNICHAIN = 'EoCvJ5tyMLMJcTnLQwWpjAtPdn74PcrZgzfcT5bYxNBH';
+
+/** Default token list: Uniswap Labs default (includes chainId + bridgeInfo for Unichain 130, etc.) */
+const DEFAULT_TOKEN_LIST_URL =
+  'https://unpkg.com/@uniswap/default-token-list@latest/build/uniswap-default.tokenlist.json';
 
 /** Token list cache: chainId -> { symbol -> address } */
 let tokenListCache: Record<number, Record<string, string>> = {};
 
-/** Fallback when no token list URL is set */
+/** Fallback when no token list URL is set. From Unichain docs (contract-addresses). */
 const TOKENS_BY_CHAIN: Record<number, Record<string, string>> = {
   1301: {
     ETH: '0x0000000000000000000000000000000000000000',
-    WETH: '0x0000000000000000000000000000000000000000',
-    USDC: '0x0000000000000000000000000000000000000000',
+    WETH: '0x4200000000000000000000000000000000000006',
+    USDC: '0x31d0220469e10c4E71834a79b1f276d740d3768F',
   },
   130: {
     ETH: '0x0000000000000000000000000000000000000000',
-    WETH: '0x0000000000000000000000000000000000000000',
-    USDC: '0x0000000000000000000000000000000000000000',
+    WETH: '0x4200000000000000000000000000000000000006',
+    USDC: '0x078d782b760474a361dda0af3839290b0ef57ad6',
   },
 };
 
-/** Fallback when no subgraph: pair key -> fee, tickSpacing */
+/** Fallback when no subgraph: pair key -> fee, tickSpacing (from on-chain discovery) */
 const POOLS_BY_CHAIN: Record<number, Record<string, { fee: number; tickSpacing: number }>> = {
-  1301: { 'WETH-USDC': { fee: 500, tickSpacing: 10 }, 'ETH-USDC': { fee: 500, tickSpacing: 10 } },
-  130: { 'WETH-USDC': { fee: 500, tickSpacing: 10 }, 'ETH-USDC': { fee: 500, tickSpacing: 10 } },
+  1301: { 'ETH-USDC': { fee: 100, tickSpacing: 1 }, 'WETH-USDC': { fee: 100, tickSpacing: 1 } },
+  130: { 'ETH-USDC': { fee: 500, tickSpacing: 10 }, 'WETH-USDC': { fee: 500, tickSpacing: 10 } },
 };
 
 /** Common fee -> tickSpacing (v4) when subgraph only returns feeTier */
@@ -47,33 +51,48 @@ function normalizeSymbol(s: string): string {
   return (s || '').toUpperCase().trim();
 }
 
+type TokenEntry = {
+  address: string;
+  symbol: string;
+  chainId?: number;
+  extensions?: { bridgeInfo?: Record<string, { tokenAddress?: string }> };
+};
+
 /**
- * Load token list from URL (env TOKEN_LIST_URL or TOKEN_LIST_URL_<chainId>).
- * Caches per chainId. Uniswap list format: { tokens: [ { address, symbol, chainId } ] }.
+ * Load token list from URL. Uses Uniswap default list when no env URL is set.
+ * Format: { tokens: [ { address, symbol, chainId?, extensions?.bridgeInfo?.[chainId].tokenAddress } ] }.
+ * For Unichain (130/1301), many tokens in the default list use extensions.bridgeInfo["130"].
  */
 async function getTokenListForChain(
   chainId: number,
   options?: { tokenListUrl?: string; tokenListUrlByChain?: Record<number, string> }
 ): Promise<Record<string, string>> {
   if (tokenListCache[chainId]) return tokenListCache[chainId];
-  const url = options?.tokenListUrlByChain?.[chainId] ?? options?.tokenListUrl;
-  if (!url) {
-    tokenListCache[chainId] = TOKENS_BY_CHAIN[chainId] ?? {};
-    return tokenListCache[chainId];
-  }
+  const url =
+    options?.tokenListUrlByChain?.[chainId] ?? options?.tokenListUrl ?? DEFAULT_TOKEN_LIST_URL;
   try {
     const res = await fetch(url);
-    const json = (await res.json()) as { tokens?: Array<{ address: string; symbol: string; chainId?: number }> };
+    const json = (await res.json()) as { tokens?: TokenEntry[] };
     const tokens = json.tokens ?? [];
     const bySymbol: Record<string, string> = {};
+    const chainKey = String(chainId);
     for (const t of tokens) {
-      if (t.chainId != null && Number(t.chainId) !== chainId) continue;
       const sym = normalizeSymbol(t.symbol);
-      if (sym) bySymbol[sym] = t.address;
+      if (!sym) continue;
+      const addr =
+        Number(t.chainId) === chainId
+          ? t.address
+          : t.extensions?.bridgeInfo?.[chainKey]?.tokenAddress;
+      if (addr) bySymbol[sym] = addr;
     }
-    if (!bySymbol['ETH']) bySymbol['ETH'] = bySymbol['WETH'] ?? '';
-    tokenListCache[chainId] = bySymbol;
-    return bySymbol;
+    if (!bySymbol['ETH'] && bySymbol['WETH']) bySymbol['ETH'] = bySymbol['WETH'];
+    // Only use fetched list if it actually has meaningful entries (> 1 token)
+    const hasMeaningfulEntries =
+      Object.keys(bySymbol).length > 1 ||
+      (Object.keys(bySymbol).length === 1 && Object.values(bySymbol)[0] !== '');
+    tokenListCache[chainId] =
+      hasMeaningfulEntries ? bySymbol : (TOKENS_BY_CHAIN[chainId] ?? {});
+    return tokenListCache[chainId];
   } catch {
     tokenListCache[chainId] = TOKENS_BY_CHAIN[chainId] ?? {};
     return tokenListCache[chainId];
@@ -82,7 +101,9 @@ async function getTokenListForChain(
 
 function resolveTokenFromMap(tokens: Record<string, string>, symbol: string): string | null {
   const n = normalizeSymbol(symbol);
-  if (n === 'ETH') return tokens['WETH'] ?? tokens['ETH'] ?? null;
+  // Uniswap v4 uses native ETH (0x000...000) as currency0 in pool keys, not WETH.
+  // Only fall back to WETH if the map doesn't have a native ETH entry.
+  if (n === 'ETH') return tokens['ETH'] ?? tokens['WETH'] ?? null;
   return tokens[n] ?? null;
 }
 
@@ -152,7 +173,11 @@ export interface EnrichOptions {
 }
 
 /**
- * Enrich swap params: token list (1), subgraph pool (2), Quoter for amountOutMinimum (2).
+ * Enrich swap params: token list (1), subgraph/fallback pool (2), Quoter for amountOutMinimum (3).
+ *
+ * If the agent specifies `fee` (and optionally `tickSpacing`) in proposal params,
+ * those values are used directly — allowing agents to deliberately choose a fee tier.
+ * Otherwise, the enrichment auto-discovers the pool via subgraph or fallback config.
  */
 export async function enrichSwapParams(
   params: Record<string, unknown>,
@@ -173,8 +198,19 @@ export async function enrichSwapParams(
   const [currency0, currency1] = BigInt(addr0) <= BigInt(addr1) ? [addr0, addr1] : [addr1, addr0];
   const zeroForOne = BigInt(addr0) <= BigInt(addr1);
 
-  let pool = await getPoolFromSubgraph(chainId, currency0, currency1, options);
-  if (!pool) pool = getPoolConfigFallback(chainId, tokenIn, tokenOut);
+  // If the agent explicitly specified a fee tier, honour it.
+  // FEE_TO_TICK_SPACING provides the canonical mapping.
+  const agentFee = typeof params.fee === 'number' ? params.fee : undefined;
+  const agentTickSpacing = typeof params.tickSpacing === 'number' ? params.tickSpacing : undefined;
+
+  let pool: { fee: number; tickSpacing: number } | null = null;
+  if (agentFee !== undefined) {
+    const ts = agentTickSpacing ?? FEE_TO_TICK_SPACING[agentFee] ?? 10;
+    pool = { fee: agentFee, tickSpacing: ts };
+  } else {
+    pool = await getPoolFromSubgraph(chainId, currency0, currency1, options);
+    if (!pool) pool = getPoolConfigFallback(chainId, tokenIn, tokenOut);
+  }
   if (!pool) return { ...params, currency0, currency1, zeroForOne };
 
   let amountOutMinimum = '0';
@@ -204,7 +240,26 @@ export async function enrichSwapParams(
   };
 }
 
-/** Enrich execution payload params by action (async when swap + quoter/subgraph). */
+/**
+ * Enrich limit-order params. A limit order uses the same pool key as a swap
+ * (same currency pair, fee, tickSpacing) so we reuse enrichSwapParams and
+ * preserve the limit-order-specific fields (targetTick, zeroForOne).
+ */
+export async function enrichLimitOrderParams(
+  params: Record<string, unknown>,
+  chainId: number,
+  forumGoal?: string,
+  options?: EnrichOptions
+): Promise<Record<string, unknown>> {
+  // Enrich pool key + quote exactly like a swap
+  const enriched = await enrichSwapParams(params, chainId, forumGoal, options);
+  // Preserve limit-order-specific fields from the original params
+  if (params.targetTick !== undefined) enriched.targetTick = params.targetTick;
+  if (params.zeroForOne !== undefined) enriched.zeroForOne = params.zeroForOne;
+  return enriched;
+}
+
+/** Enrich execution payload params by action (async when swap/limitOrder + quoter/subgraph). */
 export async function enrichExecutionPayloadParams(
   action: string,
   params: Record<string, unknown>,
@@ -214,6 +269,9 @@ export async function enrichExecutionPayloadParams(
 ): Promise<Record<string, unknown>> {
   if (action === 'swap') {
     return enrichSwapParams(params, chainId, forumGoal, options);
+  }
+  if (action === 'limitOrder') {
+    return enrichLimitOrderParams(params, chainId, forumGoal, options);
   }
   return params;
 }

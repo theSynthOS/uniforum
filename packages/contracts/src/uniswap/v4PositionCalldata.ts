@@ -10,6 +10,7 @@
 import { encodeAbiParameters, encodeFunctionData, bytesToHex } from 'viem';
 
 const MINT_POSITION = 0x02;
+const MINT_POSITION_FROM_DELTAS = 0x05;
 const SETTLE_PAIR = 0x0d;
 const TAKE_PAIR = 0x11;
 const SWEEP = 0x14;
@@ -124,6 +125,85 @@ export function buildMintPositionUnlockData(params: BuildMintPositionParams): `0
     [actionsHex, paramsArray]
   );
   return unlockData as `0x${string}`;
+}
+
+/**
+ * Build unlockData for Position Manager modifyLiquidities (mint from deltas — auto-calculates liquidity).
+ * Uses MINT_POSITION_FROM_DELTAS (0x05) which derives liquidity from deposited token amounts.
+ * actions = MINT_POSITION_FROM_DELTAS, SETTLE_PAIR [, SWEEP if useNativeEth]
+ */
+export function buildMintFromDeltasUnlockData(params: Omit<BuildMintPositionParams, 'liquidity'>): `0x${string}` {
+  const hooks = params.poolKey.hooks ?? '0x0000000000000000000000000000000000000000';
+  const mintParams = encodeAbiParameters(
+    [
+      {
+        name: 'poolKey',
+        type: 'tuple',
+        components: [
+          { name: 'currency0', type: 'address' },
+          { name: 'currency1', type: 'address' },
+          { name: 'fee', type: 'uint24' },
+          { name: 'tickSpacing', type: 'int24' },
+          { name: 'hooks', type: 'address' },
+        ],
+      },
+      { name: 'tickLower', type: 'int24' },
+      { name: 'tickUpper', type: 'int24' },
+      { name: 'amount0Max', type: 'uint128' },
+      { name: 'amount1Max', type: 'uint128' },
+      { name: 'recipient', type: 'address' },
+      { name: 'hookData', type: 'bytes' },
+    ],
+    [
+      {
+        currency0: params.poolKey.currency0 as `0x${string}`,
+        currency1: params.poolKey.currency1 as `0x${string}`,
+        fee: params.poolKey.fee,
+        tickSpacing: params.poolKey.tickSpacing,
+        hooks: hooks as `0x${string}`,
+      },
+      params.tickLower,
+      params.tickUpper,
+      BigInt(params.amount0Max),
+      BigInt(params.amount1Max),
+      params.recipient as `0x${string}`,
+      (params.hookData?.startsWith('0x') ? params.hookData : `0x${params.hookData ?? ''}`) as `0x${string}`,
+    ]
+  );
+  const settleParams = encodeAbiParameters(
+    [{ name: 'currency0', type: 'address' }, { name: 'currency1', type: 'address' }],
+    [params.poolKey.currency0 as `0x${string}`, params.poolKey.currency1 as `0x${string}`]
+  );
+
+  const actions = params.useNativeEth
+    ? new Uint8Array([MINT_POSITION_FROM_DELTAS, SETTLE_PAIR, SWEEP])
+    : new Uint8Array([MINT_POSITION_FROM_DELTAS, SETTLE_PAIR]);
+  const actionsHex = bytesToHex(actions) as `0x${string}`;
+  const paramsArray = params.useNativeEth
+    ? [mintParams, settleParams, encodeAbiParameters(
+        [{ name: 'currency', type: 'address' }, { name: 'recipient', type: 'address' }],
+        ['0x0000000000000000000000000000000000000000' as `0x${string}`, params.recipient as `0x${string}`]
+      )]
+    : [mintParams, settleParams];
+
+  const unlockData = encodeAbiParameters(
+    [{ name: 'actions', type: 'bytes' }, { name: 'params', type: 'bytes[]' }],
+    [actionsHex, paramsArray]
+  );
+  return unlockData as `0x${string}`;
+}
+
+/**
+ * Build full (commands, inputs) for Universal Router for add liquidity using MINT_POSITION_FROM_DELTAS.
+ */
+export function buildAddLiquidityFromDeltasCalldata(
+  params: Omit<BuildMintPositionParams, 'liquidity'>,
+  deadline: bigint
+): { commands: `0x${string}`; inputs: `0x${string}`[] } {
+  const unlockData = buildMintFromDeltasUnlockData(params);
+  const callData = buildV4PositionManagerCallInput(unlockData, deadline);
+  const commands = (`0x${V4_POSITION_MANAGER_CALL.toString(16).padStart(2, '0')}`) as `0x${string}`;
+  return { commands, inputs: [callData] };
 }
 
 /**

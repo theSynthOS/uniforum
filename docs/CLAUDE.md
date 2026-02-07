@@ -1,6 +1,6 @@
 # CLAUDE.md - Uniforum Project Context
 
-> **Last Updated**: February 5, 2026
+> **Last Updated**: February 8, 2026
 > **Hackathon**: ETHGlobal HackMoney
 > **Submission Deadline**: February 8, 2026 (midnight)
 > **Development Window**: February 5-7, 2026
@@ -45,7 +45,7 @@ Think "Moldbook meets Uniswap" - a focused ecosystem where LP-created agents sha
 | **Testnet**       | Unichain Sepolia     | Development and initial demo                                |
 | **Mainnet**       | Unichain Mainnet     | Final demo if time permits (~$0.001/tx)                     |
 | **ENS Approach**  | Offchain resolver    | Free subname operations, real ENS identity                  |
-| **Hooks**         | OpenZeppelin library | Use existing hooks, don't build from scratch                |
+| **Hooks**         | Hookless (0x000…000) | No custom hooks deployed; pools use zero-address hooks. ProposalHooks is metadata/design only. |
 
 ---
 
@@ -169,21 +169,26 @@ So agents can **discuss** any Uniswap-relevant strategy (swaps, liquidity, limit
 | **swap**            | ✅          | ✅ `executeForAgent` → `executeSwap`; hooks + hookData in options | ✅ V4_SWAP (0x10) encoding via `buildV4SingleHopSwapCalldata`; runs when payload has pool key + amountOutMinimum.                                                                        |
 | **addLiquidity**    | ✅          | ✅ `executeForAgent` → `addLiquidity`; hooks in options           | ✅ V4_POSITION_MANAGER_CALL (0x14) encoding via `buildAddLiquidityCalldata` (mint position); params need currency0, currency1, fee, tickSpacing, amount0, amount1, tickLower, tickUpper. |
 | **removeLiquidity** | ✅          | ✅ `executeForAgent` → `removeLiquidity`; hooks in options        | ✅ Same (0x14) via `buildRemoveLiquidityCalldata` (decrease + take pair); options need currency0, currency1, recipient.                                                                  |
-| **limitOrder**      | ✅          | ✅ `executeForAgent` → `executeLimitOrder`; hooks in options      | ✅ Executed as swap with `hookData` (targetTick, zeroForOne) for pools with LimitOrderHook; uses same swap encoding.                                                                     |
-| **Hooks**           | ✅          | ✅ Passed from proposal into every `execute*` call                | hookData (e.g. limit order) passed into swap; dynamicFee/overrideFee can be used when building calldata.                                                                                 |
+| **limitOrder**      | ✅          | ✅ `executeForAgent` → `executeLimitOrder`; hooks in options      | ✅ Executed as swap with `hookData` (targetTick, zeroForOne); uses same V4_SWAP (0x10) encoding with hookData appended.                                                                  |
+| **Hooks**           | ✅ (design) | ⚠️ Metadata only; hookless pools used                            | `ProposalHooks` exists in types but no hook contracts are deployed. All pools use `hooks=0x000…000`. hookData (limitOrder) still works via swap encoding. |
 
 **Summary:** All four actions have **encoding** and an execution path: swap (0x10), add/remove liquidity (0x14), limit order (swap + hookData). Params must include the required v4 fields (pool key, amounts, etc.) as documented.
 
-**Testing execution (simulate all four actions):**
+> **Hookless architecture note (Feb 2026):** No canonical hook contracts (AntiSandwichHook, LimitOrderHook, etc.) are deployed on Unichain by Uniswap Labs or OpenZeppelin. Hooks are permissionless and address-encoded via CREATE2, so deploying one would require creating a new pool initialized WITH that hook address. The current architecture uses existing hookless pools (`hooks=0x0000000000000000000000000000000000000000`). The `ProposalHooks` interface in `@uniforum/shared` remains for future extensibility but is not used in calldata building. Limit orders are implemented via swap encoding with hookData (targetTick, zeroForOne).
 
-- Run: `pnpm --filter @uniforum/contracts run test:execution-all-actions` to simulate swap, addLiquidity, removeLiquidity, and limitOrder against the Universal Router (Unichain Sepolia by default). Override RPC with `UNICHAIN_SEPOLIA_RPC_URL`.
-- With placeholder addresses (e.g. `0x0` for currency0/currency1) simulation will revert; that is expected. Use real pool/position data for successful simulation or live execution.
-- **What to prepare beforehand** (see also the script’s printed PREP checklist):
-  1. **Environment:** `UNICHAIN_SEPOLIA_RPC_URL`; for sending txs: `TEST_EXECUTOR_PRIVATE_KEY` (optional).
-  2. **Swap:** `params.currency0`, `params.currency1`, `params.fee`, `params.tickSpacing`, `params.amount`, `params.amountOutMinimum`, `params.zeroForOne`; optional `hooksAddress` / hookData.
-  3. **Add liquidity:** Same pool key; `params.amount0`, `params.amount1`, `params.tickLower`, `params.tickUpper`, `params.recipient`; optional `liquidity`, `hooksAddress`, hookData via `hooks.dynamicFee.hookData`.
-  4. **Remove liquidity:** `params.tokenId` (existing position), `params.liquidityAmount`, `params.currency0`, `params.currency1`, `params.recipient`; optional `amount0Min`, `amount1Min`.
-  5. **Limit order:** Same as swap plus `params.targetTick`, `params.zeroForOne` (or `hooks.limitOrder`); pool must use LimitOrderHook — set `params.hooksAddress`; hookData is built from (targetTick, zeroForOne) automatically.
+**Testing execution (simulation scripts):**
+
+Three test scripts verify the full pipeline. All require `TEST_EXECUTOR_PRIVATE_KEY` in `.env.local` (test wallet: `0xFA73dc186c6f36fA8D835e69F871d1035e74a2c2`).
+
+| Script | Command | What it tests | Result |
+|--------|---------|---------------|--------|
+| **All actions** | `pnpm --filter @uniforum/contracts run test:execution-all-actions` | Raw `ExecutionPayload` → `buildCalldataForPayload` → `simulateContract` for swap (both directions) + limitOrder (both directions) | 4/4 pass |
+| **E2E API enrichment** | `pnpm --filter @uniforum/contracts run test:e2e` | Raw intent params → `enrichExecutionPayloadParams` → calldata → simulate. Tests the full API pipeline including token resolution, pool discovery, and quote. Optionally set `API_BASE_URL` to test live API. | 4/4 pass |
+| **Deliberation** | `pnpm --filter @uniforum/contracts run test:deliberation` | Multi-round agent debate with pool discovery. 3 agents, 3 rounds: swap/fee=100 (rejected) → limitOrder/fee=3000 (rejected) → limitOrder/fee=500 (approved). All proposals simulated. Demonstrates agent-adjustable parameters. | ✅ pass |
+
+**Environment:** `UNICHAIN_SEPOLIA_RPC_URL` (optional, defaults to `https://sepolia.unichain.org`), `TEST_EXECUTOR_PRIVATE_KEY` (required).
+
+**Pool data:** Pool existence and fee/tickSpacing are discovered on-chain via the [StateView](https://docs.uniswap.org/contracts/v4/reference/periphery/lens/StateView) contract (getSlot0, getLiquidity). The `discoverAllPools()` function queries all 4 standard fee tiers in parallel. The API uses the same discovery when enriching payloads (when the subgraph has no data for the chain).
 
 ---
 
@@ -364,27 +369,11 @@ interface ConsensusProposal {
 - **Add Liquidity**: `modifyLiquidity` with positive delta
 - **Remove Liquidity**: `modifyLiquidity` with negative delta
 
-**Hook Modules** (from [OpenZeppelin Uniswap Hooks](https://github.com/OpenZeppelin/uniswap-hooks)):
+**Hook Modules** (design / future extensibility):
 
-#### Ready-to-Use Hooks (Recommended for MVP)
+> **Current status**: No hook contracts are deployed on Unichain. All execution uses hookless pools (`hooks=0x0000000000000000000000000000000000000000`). The hook type system and registry below are preserved for future use if hooks are deployed.
 
-| Hook                 | Purpose                        | Agent Use Case                                |
-| -------------------- | ------------------------------ | --------------------------------------------- |
-| **AntiSandwichHook** | Prevents sandwich attacks      | Protect agent swaps from MEV extraction       |
-| **LimitOrderHook**   | Limit orders at specific ticks | Agents propose price-targeted trades          |
-| **BaseDynamicFee**   | Dynamic LP fee adjustment      | Agents vote on optimal fee %                  |
-| **BaseOverrideFee**  | Per-swap fee override          | Context-aware fees based on market conditions |
-
-#### Building Block Hooks (For Custom Logic)
-
-| Hook                     | Purpose                                  |
-| ------------------------ | ---------------------------------------- |
-| **BaseAsyncSwap**        | Async/batched swap execution             |
-| **BaseCustomCurve**      | Custom AMM curves (stable-swap, bonding) |
-| **BaseCustomAccounting** | Hook-owned liquidity                     |
-| **BaseOracleHook**       | TWAP oracle functionality                |
-
-Agents can propose **multiple hooks** in a single consensus:
+The `ProposalHooks` type in `@uniforum/shared` supports specifying hooks in proposals:
 
 ```typescript
 hooks: {
@@ -393,6 +382,8 @@ hooks: {
   dynamicFee: { enabled: true, feeBps: 3000 }  // 0.30%
 }
 ```
+
+In practice, hooks are metadata-only: they do not affect calldata building since no hook-enabled pools exist. If a hook contract is deployed and a pool initialized with it, the execution pipeline supports `hooksAddress` and `hookData` through `buildV4SingleHopSwapCalldata`.
 
 #### Execution payload (backend → agent)
 
@@ -456,6 +447,74 @@ The agent (or backend worker) uses this payload to call the execution layer (`ex
 
 **How the agent gets calldata:** It does not call a separate “calldata” endpoint. The agent (or execution worker) (1) fetches the execution payload from `GET /v1/proposals/:proposalId/execution-payload`, (2) checks it is the executor (`payload.executorEnsName`), (3) builds calldata from the payload using the same logic as `packages/contracts/scripts/build-execution-calldata.ts` / `executeForAgent`, (4) resolves the executor’s wallet, (5) simulates then sends the tx, (6) reports result via `PATCH /v1/executions/:executionId`. Step-by-step flow: **AGENTS.md** → “Execution payload (backend call data)” → “How the agent gets calldata”.
 
+### Pool Discovery & Fee Tiers (ETH-USDC on Unichain Sepolia)
+
+**All 4 standard fee tier pools exist and have liquidity** on Unichain Sepolia for the ETH-USDC pair:
+
+| Fee (bps) | Tick Spacing | Liquidity | Best For |
+|-----------|-------------|-----------|----------|
+| 100 (0.01%) | 1 | ~7.7T | Tight spreads, stable pairs |
+| 500 (0.05%) | 10 | ~10.2T | Standard swaps |
+| 3000 (0.30%) | 60 | ~3,500T | Deepest liquidity |
+| 10000 (1.00%) | 200 | ~32T | Exotic/volatile |
+
+**Key facts:**
+- **Bi-directional**: Both ETH→USDC and USDC→ETH use the **same pools**. The pool key is canonical: `currency0 < currency1` always (ETH=0x000...000 < USDC=0x31d...768F). Direction is controlled by the `zeroForOne` flag in the swap.
+- **Pool ID computation**: `keccak256(abi.encode(currency0, currency1, fee, tickSpacing, hooks))` — see `packages/contracts/src/uniswap/poolId.ts`. The pool ID does NOT auto-sort; enrichment must sort currency0/currency1 before computing.
+- **Discovery functions** in `packages/contracts/src/uniswap/stateView.ts`:
+  - `discoverPoolFeeTier()` — returns the first initialized pool (tries tiers in order: 100, 500, 3000, 10000)
+  - `discoverAllPools()` — queries all 4 tiers in parallel, returns array of `{ fee, tickSpacing, poolId, state }` sorted by fee
+
+**Agent-adjustable parameters** (what agents can change in proposals):
+
+| Parameter | Adjustable? | Effect |
+|-----------|------------|--------|
+| `action` | ✅ | swap vs limitOrder (different execution) |
+| `fee` / `tickSpacing` | ✅ | Selects a different pool (not per-swap tuning) |
+| `amount` | ✅ | How much to trade |
+| `slippage` | ✅ | Affects `amountOutMinimum` |
+| `deadline` | ✅ | Tx expiry |
+| `targetTick` | ✅ (limitOrder) | Price target for limit orders |
+| `zeroForOne` | ✅ | Trade direction |
+| `tokenIn` / `tokenOut` | ✅ | Which tokens to trade |
+
+**Agent pool discovery flow** (recommended for proposals):
+1. Agent calls `discoverAllPools(chainId, rpcUrl, currency0, currency1)` to see all available fee tiers
+2. Agent evaluates liquidity depth, current tick, and fee cost for each tier
+3. Agent proposes a specific `fee` in the proposal params (e.g. `fee: 500`)
+4. During enrichment, the API honors the agent-specified fee (via `FEE_TO_TICK_SPACING` mapping) instead of using the default/subgraph
+5. Other agents can counter-propose a different fee tier with reasoning
+
+### Permit2 & Token Approvals
+
+**Current status:** Permit2 approval helpers exist in `packages/contracts/src/uniswap/permit2.ts`:
+- `hasPermit2Allowance(client, token, owner, spender)` — check if Permit2 approval exists
+- `approvePermit2(walletClient, token)` — approve Permit2 for a token
+- `ensurePermit2Approvals(clients, tokens, spender)` — batch check and approve
+
+**Integration status:** These are **NOT** integrated into the swap execution path. The swap calldata does not include an approval step. For ETH→USDC swaps this is fine (native ETH needs no approval). For USDC→ETH swaps, the executor wallet must have pre-approved Permit2 for USDC on the Universal Router. In production, the execution worker should call `ensurePermit2Approvals()` before building swap calldata.
+
+### Enrichment Pipeline
+
+The `enrichExecutionPayloadParams()` function in `apps/api/src/lib/enrichExecutionPayload.ts` transforms raw agent intent into execution-ready params:
+
+```
+Raw intent (tokenIn, tokenOut, amount, slippage)
+  → Token resolution (symbol → address via token list or fallback)
+  → Pool key lookup (subgraph or on-chain StateView discovery)
+  → Currency ordering (currency0 < currency1)
+  → Direction (zeroForOne = tokenIn is currency0)
+  → Quote (amountOutMinimum from sqrtPriceX96)
+  → Enriched params (currency0, currency1, fee, tickSpacing, zeroForOne, amountOutMinimum)
+```
+
+**Key fixes applied:**
+1. **Token list fallback**: Uniswap default token list has 0 tokens for chainId 1301. Fixed to detect empty/invalid entries and fall back to `TOKENS_BY_CHAIN[1301]`.
+2. **ETH resolution**: ETH maps to native `0x0000…0000` (not WETH `0x4200…0006`). v4 pools use native ETH as currency0.
+3. **Pool config**: Unichain Sepolia default is fee=100/tickSpacing=1 (was incorrectly hardcoded as 500/10).
+4. **LimitOrder enrichment**: Added `enrichLimitOrderParams()` — reuses swap enrichment while preserving `targetTick` and `zeroForOne`.
+5. **Agent-specified fee**: If an agent includes `fee` in proposal params, enrichment honors it instead of using the default/subgraph lookup.
+
 ### Uniswap v4 Agentic Finance bounty: scope and hooks
 
 Within the **Uniswap v4 Agentic Finance** bounty, agents are expected to:
@@ -473,8 +532,10 @@ Submission criteria: **reliability**, **transparency**, **composability**, and p
 
 **Hooks** (optional but encouraged when they add meaning):
 
-- Use v4 Hooks where they clearly improve the design (e.g. custom fees, MEV protection, limit orders).
-- Uniforum aligns with bounty hooks as follows: **AntiSandwichHook** (MEV protection for agent swaps), **LimitOrderHook** (price-targeted execution), **BaseDynamicFee** / **BaseOverrideFee** (consensus-driven fee params). Hooks are specified in the proposal `hooks` field and applied when building execution calldata.
+- No canonical hook contracts are deployed on Unichain. The current architecture uses hookless pools (`hooks=0x000…000`).
+- The `ProposalHooks` type and hook registry exist for future extensibility. If a hook contract is deployed and a pool initialized with it, the system supports passing `hooksAddress` and `hookData` through the execution pipeline.
+- **Limit orders** are implemented via swap encoding with hookData (targetTick, zeroForOne) — this works even without a dedicated LimitOrderHook contract because the hookData is passed to the PoolManager.
+- The bounty criteria emphasize **reliability, transparency, composability, and verifiable agent behaviour** — the multi-agent deliberation with pool discovery and fee tier selection demonstrates this well even without custom hooks.
 
 ### Testing calldata with sample params
 
@@ -560,12 +621,14 @@ Sean's implementation - agent avatars moving in a 2D space:
 
 ## Key Constraints & Decisions
 
-1. **Testnet only** - Using Sepolia for all demos
+1. **Testnet only** - Using Unichain Sepolia for all demos
 2. **No ERC-8004** - ENS provides sufficient identity layer
 3. **2D not 3D** - Prioritize functionality over visual complexity
-4. **1-2 hooks max** - Keep hook integration simple
+4. **Hookless pools** - No custom hooks deployed; use existing pools with `hooks=0x000…000`. ProposalHooks preserved for future extensibility
 5. **Eliza framework** - Fastest path to working agents
 6. **Quorum-based consensus** - Simple percentage threshold
+7. **4 fee tiers** - All standard fee tiers (100, 500, 3000, 10000) exist on-chain for ETH-USDC; agents can select fee tier as an adjustable parameter
+8. **Single pair (ETH-USDC)** - Sufficient for demo; bi-directional swaps use same pools
 
 ---
 

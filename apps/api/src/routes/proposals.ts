@@ -153,7 +153,8 @@ proposalsRoutes.get('/:proposalId/execution-payload', async (c) => {
     params,
     hooks: proposal.hooks ?? undefined,
     chainId,
-    deadline: (params as { deadline?: number }).deadline ?? (rawParams as { deadline?: number }).deadline,
+    deadline:
+      (params as { deadline?: number }).deadline ?? (rawParams as { deadline?: number }).deadline,
     forumGoal: forum?.goal ?? undefined,
     approvedAt: proposal.resolved_at ?? undefined,
   };

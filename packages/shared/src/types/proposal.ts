@@ -80,6 +80,18 @@ export type ProposalParams =
 
 // Hook configuration
 export interface ProposalHooks {
+  /**
+   * The deployed hook contract address. When set, this is included in the pool key
+   * (currency0, currency1, fee, tickSpacing, hooks). The pool must have been initialized
+   * with this hook address for the transaction to succeed.
+   */
+  hooksAddress?: string;
+  /**
+   * Arbitrary hook data bytes (hex-encoded) to pass to the hook contract.
+   * Used when a hook requires custom data for beforeSwap/afterSwap/beforeMint etc.
+   * For limit orders, hookData is auto-generated from targetTick + zeroForOne.
+   */
+  hookData?: string;
   antiSandwich?: {
     enabled: boolean;
   };
@@ -104,6 +116,8 @@ export const createProposalSchema = z.object({
   params: z.record(z.any()),
   hooks: z
     .object({
+      hooksAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
+      hookData: z.string().regex(/^0x[a-fA-F0-9]*$/).optional(),
       antiSandwich: z.object({ enabled: z.boolean() }).optional(),
       limitOrder: z
         .object({
