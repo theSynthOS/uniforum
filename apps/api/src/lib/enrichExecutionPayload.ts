@@ -9,8 +9,12 @@
 
 import { getQuoteExactInputSingle } from '@uniforum/contracts';
 
-/** Uniswap v4 subgraph id (Unichain) – used when only GRAPH_API_KEY is set */
+/** Uniswap v4 subgraph id (Unichain) – official from https://docs.uniswap.org/api/subgraph/overview */
 const UNISWAP_V4_SUBGRAPH_ID_UNICHAIN = 'EoCvJ5tyMLMJcTnLQwWpjAtPdn74PcrZgzfcT5bYxNBH';
+
+/** Default token list: Uniswap Labs default (includes chainId + bridgeInfo for Unichain 130, etc.) */
+const DEFAULT_TOKEN_LIST_URL =
+  'https://unpkg.com/@uniswap/default-token-list@latest/build/uniswap-default.tokenlist.json';
 
 /** Token list cache: chainId -> { symbol -> address } */
 let tokenListCache: Record<number, Record<string, string>> = {};
@@ -47,33 +51,44 @@ function normalizeSymbol(s: string): string {
   return (s || '').toUpperCase().trim();
 }
 
+type TokenEntry = {
+  address: string;
+  symbol: string;
+  chainId?: number;
+  extensions?: { bridgeInfo?: Record<string, { tokenAddress?: string }> };
+};
+
 /**
- * Load token list from URL (env TOKEN_LIST_URL or TOKEN_LIST_URL_<chainId>).
- * Caches per chainId. Uniswap list format: { tokens: [ { address, symbol, chainId } ] }.
+ * Load token list from URL. Uses Uniswap default list when no env URL is set.
+ * Format: { tokens: [ { address, symbol, chainId?, extensions?.bridgeInfo?.[chainId].tokenAddress } ] }.
+ * For Unichain (130/1301), many tokens in the default list use extensions.bridgeInfo["130"].
  */
 async function getTokenListForChain(
   chainId: number,
   options?: { tokenListUrl?: string; tokenListUrlByChain?: Record<number, string> }
 ): Promise<Record<string, string>> {
   if (tokenListCache[chainId]) return tokenListCache[chainId];
-  const url = options?.tokenListUrlByChain?.[chainId] ?? options?.tokenListUrl;
-  if (!url) {
-    tokenListCache[chainId] = TOKENS_BY_CHAIN[chainId] ?? {};
-    return tokenListCache[chainId];
-  }
+  const url =
+    options?.tokenListUrlByChain?.[chainId] ?? options?.tokenListUrl ?? DEFAULT_TOKEN_LIST_URL;
   try {
     const res = await fetch(url);
-    const json = (await res.json()) as { tokens?: Array<{ address: string; symbol: string; chainId?: number }> };
+    const json = (await res.json()) as { tokens?: TokenEntry[] };
     const tokens = json.tokens ?? [];
     const bySymbol: Record<string, string> = {};
+    const chainKey = String(chainId);
     for (const t of tokens) {
-      if (t.chainId != null && Number(t.chainId) !== chainId) continue;
       const sym = normalizeSymbol(t.symbol);
-      if (sym) bySymbol[sym] = t.address;
+      if (!sym) continue;
+      const addr =
+        Number(t.chainId) === chainId
+          ? t.address
+          : t.extensions?.bridgeInfo?.[chainKey]?.tokenAddress;
+      if (addr) bySymbol[sym] = addr;
     }
     if (!bySymbol['ETH']) bySymbol['ETH'] = bySymbol['WETH'] ?? '';
-    tokenListCache[chainId] = bySymbol;
-    return bySymbol;
+    tokenListCache[chainId] =
+      Object.keys(bySymbol).length > 0 ? bySymbol : (TOKENS_BY_CHAIN[chainId] ?? {});
+    return tokenListCache[chainId];
   } catch {
     tokenListCache[chainId] = TOKENS_BY_CHAIN[chainId] ?? {};
     return tokenListCache[chainId];
