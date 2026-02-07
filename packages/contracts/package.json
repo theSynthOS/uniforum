@@ -11,10 +11,16 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src/"
+    "lint": "eslint src/",
+    "build:calldata": "bun run scripts/build-execution-calldata.ts",
+    "test:execution-tx": "bun run scripts/test-execution-tx.ts",
+    "test:execution-all-actions": "bun run scripts/test-all-actions-simulate.ts"
   },
   "dependencies": {
     "@uniforum/shared": "workspace:*",
+    "@uniswap/sdk-core": "^5.0.0",
+    "@uniswap/universal-router-sdk": "^4.29.0",
+    "@uniswap/v4-sdk": "^1.25.0",
     "viem": "^2.7.0"
   },
   "devDependencies": {
