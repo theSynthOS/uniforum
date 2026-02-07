@@ -10,6 +10,9 @@
     "allowJs": true,
     "noEmit": true,
     "incremental": true,
+    "types": [
+      "node"
+    ],
     "baseUrl": ".",
     "paths": {
       "@/*": [

@@ -11,6 +11,9 @@ export interface AgentVoteContext {
   riskTolerance: number;
   preferredPools: string[];
   expertiseContext?: string;
+  rulesOfThumb?: string[];
+  constraints?: Record<string, unknown>;
+  objectiveWeights?: Record<string, number>;
 }
 
 export interface VoteEvaluationResult {
@@ -65,6 +68,19 @@ export function evaluateProposalRules(
   agentContext: AgentVoteContext
 ): VoteEvaluationResult | null {
   const riskScore = calculateProposalRisk(proposal);
+  const constraints = agentContext.constraints || {};
+  const maxRiskScore = typeof (constraints as any).maxRiskScore === 'number'
+    ? (constraints as any).maxRiskScore
+    : undefined;
+  if (maxRiskScore !== undefined && riskScore > maxRiskScore) {
+    return {
+      vote: 'disagree',
+      confidence: 0.85,
+      reasoning: `Risk score (${(riskScore * 100).toFixed(0)}%) exceeds constraint ${(
+        maxRiskScore * 100
+      ).toFixed(0)}%`,
+    };
+  }
 
   // Conservative agents reject high-risk proposals
   if (agentContext.strategy === 'conservative' && riskScore > 0.6) {
@@ -96,6 +112,39 @@ export function evaluateProposalRules(
     };
   }
 
+  if ((constraints as any).requirePoolMatch) {
+    return {
+      vote: 'disagree',
+      confidence: 0.7,
+      reasoning: `Constraint requires preferred pool match; proposal pool ${poolId} not matched`,
+    };
+  }
+
+  const maxSwapAmount = (constraints as any).maxSwapAmount;
+  if (typeof maxSwapAmount === 'number' && params.amount) {
+    const amount = parseFloat(params.amount);
+    if (amount > maxSwapAmount) {
+      return {
+        vote: 'disagree',
+        confidence: 0.8,
+        reasoning: `Amount ${amount} exceeds maxSwapAmount constraint ${maxSwapAmount}`,
+      };
+    }
+  }
+
+  const maxSlippageBps = (constraints as any).maxSlippageBps;
+  if (typeof maxSlippageBps === 'number' && params.slippage != null) {
+    const slippage = typeof params.slippage === 'number' ? params.slippage : parseFloat(params.slippage);
+    const slippageBps = slippage <= 1 ? Math.round(slippage * 10_000) : Math.round(slippage);
+    if (slippageBps > maxSlippageBps) {
+      return {
+        vote: 'disagree',
+        confidence: 0.8,
+        reasoning: `Slippage ${slippageBps} bps exceeds maxSlippageBps constraint ${maxSlippageBps}`,
+      };
+    }
+  }
+
   // No clear rule-based decision
   return null;
 }
@@ -115,6 +164,9 @@ Your Profile:
 - Risk Tolerance: ${(agentContext.riskTolerance * 100).toFixed(0)}%
 - Preferred Pools: ${agentContext.preferredPools.join(', ')}
 - Expertise: ${agentContext.expertiseContext || 'General DeFi knowledge'}
+${agentContext.rulesOfThumb?.length ? `- Rules of Thumb: ${agentContext.rulesOfThumb.join(' | ')}` : ''}
+${agentContext.constraints ? `- Constraints: ${JSON.stringify(agentContext.constraints)}` : ''}
+${agentContext.objectiveWeights ? `- Objective Weights: ${JSON.stringify(agentContext.objectiveWeights)}` : ''}
 
 Proposal Details:
 - Action: ${proposal.action}

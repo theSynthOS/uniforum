@@ -5,7 +5,7 @@
  */
 
 import type { Proposal, Execution, ExecutionStatus } from '@uniforum/shared';
-import { executeSwap, addLiquidity, removeLiquidity } from '@uniforum/contracts';
+import { executeSwap, addLiquidity, removeLiquidity, executeLimitOrder } from '@uniforum/contracts';
 import { sleep, retryWithBackoff } from '@uniforum/shared';
 
 export interface ExecutionContext {
@@ -32,11 +32,14 @@ export async function executeForAgent(context: ExecutionContext): Promise<Execut
   try {
     let result;
 
+    const hooks = proposal.hooks;
+
     switch (proposal.action) {
       case 'swap':
         result = await executeSwap({
           privateKey: agentPrivateKey,
           params: proposal.params as any,
+          hooks,
           chainId,
         });
         break;
@@ -45,29 +48,47 @@ export async function executeForAgent(context: ExecutionContext): Promise<Execut
         result = await addLiquidity({
           privateKey: agentPrivateKey,
           params: proposal.params as any,
+          hooks,
           chainId,
         });
         break;
 
-      case 'removeLiquidity':
-        // Need tokenId for removal
-        const tokenId = (proposal.params as any).tokenId;
-        const liquidityAmount = (proposal.params as any).liquidityAmount;
-
+      case 'removeLiquidity': {
+        const rp = proposal.params as {
+          tokenId: string;
+          liquidityAmount: string;
+          currency0?: string;
+          currency1?: string;
+          recipient?: string;
+          amount0Min?: string;
+          amount1Min?: string;
+        };
         result = await removeLiquidity({
           privateKey: agentPrivateKey,
-          tokenId: BigInt(tokenId),
-          liquidityToRemove: BigInt(liquidityAmount),
+          tokenId: BigInt(rp.tokenId),
+          liquidityToRemove: BigInt(rp.liquidityAmount),
+          hooks,
+          chainId,
+          currency0: rp.currency0,
+          currency1: rp.currency1,
+          recipient: rp.recipient,
+          amount0Min: rp.amount0Min,
+          amount1Min: rp.amount1Min,
+        });
+        break;
+      }
+
+      case 'limitOrder':
+        result = await executeLimitOrder({
+          privateKey: agentPrivateKey,
+          params: proposal.params as any,
+          hooks,
           chainId,
         });
         break;
 
-      case 'limitOrder':
-        // TODO: Implement limit order execution
-        throw new Error('Limit order execution not yet implemented');
-
       default:
-        throw new Error(`Unknown action: ${proposal.action}`);
+        throw new Error(`Unknown action: ${(proposal as any).action}`);
     }
 
     if (result.success) {
@@ -93,7 +114,12 @@ export async function executeForAgent(context: ExecutionContext): Promise<Execut
 }
 
 /**
- * Execute a proposal for all agreeing agents
+ * Execute a proposal for the designated executor agent.
+ *
+ * Note: The function accepts an array for future extensibility, but in the
+ * Uniforum flow we only ever execute using a single agent – the forum creator
+ * whose proposal reached consensus. Callers should therefore pass an array
+ * containing just that creator agent.
  */
 export async function executeConsensus(
   proposal: Proposal,
@@ -109,11 +135,17 @@ export async function executeConsensus(
 ): Promise<ExecutionResult[]> {
   const { chainId = 1301, parallel = false, delayBetweenMs = 1000 } = options;
 
+  // For Uniforum, we intentionally execute using a single agent (the forum
+  // creator). If more than one agent is passed, we only execute for the first
+  // one to preserve the "collective intelligence, single executor" model.
+  const executors = agreeingAgents.slice(0, 1);
+
   const results: ExecutionResult[] = [];
 
   if (parallel) {
-    // Execute all in parallel
-    const promises = agreeingAgents.map((agent) =>
+    // Execute in parallel (effectively a no-op difference with a single agent,
+    // but kept for API symmetry).
+    const promises = executors.map((agent) =>
       retryWithBackoff(
         () =>
           executeForAgent({
@@ -135,15 +167,15 @@ export async function executeConsensus(
         results.push(result.value);
       } else {
         results.push({
-          agentEnsName: agreeingAgents[i].ensName,
+          agentEnsName: executors[i].ensName,
           status: 'failed',
           error: result.reason?.message || 'Execution failed',
         });
       }
     }
   } else {
-    // Execute sequentially with delay
-    for (const agent of agreeingAgents) {
+    // Execute sequentially with delay (again, typically a single agent).
+    for (const agent of executors) {
       const result = await retryWithBackoff(
         () =>
           executeForAgent({

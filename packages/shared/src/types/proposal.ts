@@ -67,7 +67,16 @@ export interface LimitOrderParams {
   zeroForOne: boolean;
 }
 
-export type ProposalParams = SwapParams | LiquidityParams | LimitOrderParams;
+export interface RemoveLiquidityParams {
+  tokenId: string;
+  liquidityAmount: string;
+}
+
+export type ProposalParams =
+  | SwapParams
+  | LiquidityParams
+  | LimitOrderParams
+  | RemoveLiquidityParams;
 
 // Hook configuration
 export interface ProposalHooks {
@@ -180,4 +189,32 @@ export interface ConsensusResult {
   reason?: string;
   percentage?: number;
   agreeingAgents?: string[];
+}
+
+/**
+ * Execution payload: the data format the backend returns so the agent (or
+ * execution worker) can form and execute the transaction. Topic-agnostic and
+ * action-agnostic — works for any forum and any action (swap, addLiquidity,
+ * removeLiquidity, limitOrder).
+ *
+ * The executor is always the forum creator's agent; other agents only vote.
+ */
+export interface ExecutionPayload {
+  /** Proposal and forum identifiers */
+  proposalId: string;
+  forumId: string;
+  /** ENS name of the single agent that must execute (forum creator) */
+  executorEnsName: string;
+  /** Action to perform; params shape depends on action */
+  action: ProposalAction;
+  params: ProposalParams;
+  hooks?: ProposalHooks;
+  /** Chain to execute on (e.g. 1301 for Unichain) */
+  chainId: number;
+  /** Optional deadline (unix seconds); used for swaps */
+  deadline?: number;
+  /** Human-readable forum goal (for logging/display) */
+  forumGoal?: string;
+  /** When the proposal was approved (ISO string) */
+  approvedAt?: string;
 }

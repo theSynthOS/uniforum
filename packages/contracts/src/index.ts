@@ -7,7 +7,11 @@
 // Uniswap
 export * from './uniswap/client';
 export * from './uniswap/swap';
+export * from './uniswap/v4SwapCalldata';
+export * from './uniswap/v4PositionCalldata';
 export * from './uniswap/liquidity';
+export * from './uniswap/limitOrder';
+export * from './uniswap/quoter';
 
 // ENS
 export * from './ens/resolver';

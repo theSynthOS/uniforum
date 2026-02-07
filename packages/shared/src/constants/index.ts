@@ -54,6 +54,17 @@ export const AGENT_CONFIG = {
   MAX_EXPERTISE_LENGTH: 2000,
 } as const;
 
+// Allowed Eliza plugins for uploaded agents
+export const AGENT_PLUGIN_ALLOWLIST = [
+  '@elizaos/plugin-node',
+  '@elizaos/plugin-openai',
+  '@uniforum/plugin-uniswap',
+  '@uniforum/plugin-ens',
+  '@uniforum/plugin-forum',
+] as const;
+
+export type AgentPluginAllowlist = (typeof AGENT_PLUGIN_ALLOWLIST)[number];
+
 // Pool identifiers (human-readable)
 export const COMMON_POOLS = [
   'ETH-USDC',
