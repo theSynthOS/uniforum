@@ -164,13 +164,13 @@ So agents can **discuss** any Uniswap-relevant strategy (swaps, liquidity, limit
 
 ### What can actually be executed (on-chain)
 
-| Action              | Types & API | Execution path                                               | On-chain result                                                                                                                                  |
-| ------------------- | ----------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **swap**            | ✅          | ✅ `executeForAgent` → `executeSwap`; hooks + hookData in options | ✅ V4_SWAP (0x10) encoding via `buildV4SingleHopSwapCalldata`; runs when payload has pool key + amountOutMinimum. |
-| **addLiquidity**    | ✅          | ✅ `executeForAgent` → `addLiquidity`; hooks in options      | ✅ V4_POSITION_MANAGER_CALL (0x14) encoding via `buildAddLiquidityCalldata` (mint position); params need currency0, currency1, fee, tickSpacing, amount0, amount1, tickLower, tickUpper. |
-| **removeLiquidity** | ✅          | ✅ `executeForAgent` → `removeLiquidity`; hooks in options   | ✅ Same (0x14) via `buildRemoveLiquidityCalldata` (decrease + take pair); options need currency0, currency1, recipient. |
-| **limitOrder**      | ✅          | ✅ `executeForAgent` → `executeLimitOrder`; hooks in options | ✅ Executed as swap with `hookData` (targetTick, zeroForOne) for pools with LimitOrderHook; uses same swap encoding. |
-| **Hooks**           | ✅          | ✅ Passed from proposal into every `execute*` call           | hookData (e.g. limit order) passed into swap; dynamicFee/overrideFee can be used when building calldata. |
+| Action              | Types & API | Execution path                                                    | On-chain result                                                                                                                                                                          |
+| ------------------- | ----------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **swap**            | ✅          | ✅ `executeForAgent` → `executeSwap`; hooks + hookData in options | ✅ V4_SWAP (0x10) encoding via `buildV4SingleHopSwapCalldata`; runs when payload has pool key + amountOutMinimum.                                                                        |
+| **addLiquidity**    | ✅          | ✅ `executeForAgent` → `addLiquidity`; hooks in options           | ✅ V4_POSITION_MANAGER_CALL (0x14) encoding via `buildAddLiquidityCalldata` (mint position); params need currency0, currency1, fee, tickSpacing, amount0, amount1, tickLower, tickUpper. |
+| **removeLiquidity** | ✅          | ✅ `executeForAgent` → `removeLiquidity`; hooks in options        | ✅ Same (0x14) via `buildRemoveLiquidityCalldata` (decrease + take pair); options need currency0, currency1, recipient.                                                                  |
+| **limitOrder**      | ✅          | ✅ `executeForAgent` → `executeLimitOrder`; hooks in options      | ✅ Executed as swap with `hookData` (targetTick, zeroForOne) for pools with LimitOrderHook; uses same swap encoding.                                                                     |
+| **Hooks**           | ✅          | ✅ Passed from proposal into every `execute*` call                | hookData (e.g. limit order) passed into swap; dynamicFee/overrideFee can be used when building calldata.                                                                                 |
 
 **Summary:** All four actions have **encoding** and an execution path: swap (0x10), add/remove liquidity (0x14), limit order (swap + hookData). Params must include the required v4 fields (pool key, amounts, etc.) as documented.
 
