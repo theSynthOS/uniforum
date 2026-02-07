@@ -14,7 +14,9 @@
     "lint": "eslint src/",
     "build:calldata": "bun run scripts/build-execution-calldata.ts",
     "test:execution-tx": "bun run scripts/test-execution-tx.ts",
-    "test:execution-all-actions": "bun run scripts/test-all-actions-simulate.ts"
+    "test:execution-all-actions": "bun run scripts/test-all-actions-simulate.ts",
+    "test:e2e": "bun run scripts/test-e2e-api-simulate.ts",
+    "test:deliberation": "bun run scripts/test-deliberation-simulate.ts"
   },
   "dependencies": {
     "@uniforum/shared": "workspace:*",
