@@ -19,17 +19,17 @@ const DEFAULT_TOKEN_LIST_URL =
 /** Token list cache: chainId -> { symbol -> address } */
 let tokenListCache: Record<number, Record<string, string>> = {};
 
-/** Fallback when no token list URL is set */
+/** Fallback when no token list URL is set. From Unichain docs (contract-addresses). */
 const TOKENS_BY_CHAIN: Record<number, Record<string, string>> = {
   1301: {
     ETH: '0x0000000000000000000000000000000000000000',
-    WETH: '0x0000000000000000000000000000000000000000',
-    USDC: '0x0000000000000000000000000000000000000000',
+    WETH: '0x4200000000000000000000000000000000000006',
+    USDC: '0x31d0220469e10c4E71834a79b1f276d740d3768F',
   },
   130: {
     ETH: '0x0000000000000000000000000000000000000000',
-    WETH: '0x0000000000000000000000000000000000000000',
-    USDC: '0x0000000000000000000000000000000000000000',
+    WETH: '0x4200000000000000000000000000000000000006',
+    USDC: '0x078d782b760474a361dda0af3839290b0ef57ad6',
   },
 };
 
