@@ -124,11 +124,20 @@ proposalsRoutes.get('/:proposalId/execution-payload', async (c) => {
   const chainId = parseInt(c.req.query('chainId') || String(DEFAULT_EXECUTION_CHAIN_ID), 10);
 
   const rawParams = (proposal.params as Record<string, unknown>) || {};
-  const params = enrichExecutionPayloadParams(
+  const params = await enrichExecutionPayloadParams(
     proposal.action,
     rawParams,
     chainId,
-    forum?.goal
+    forum?.goal,
+    {
+      rpcUrl: process.env.UNICHAIN_SEPOLIA_RPC_URL ?? process.env[`RPC_URL_${chainId}`],
+      tokenListUrl: process.env.TOKEN_LIST_URL,
+      tokenListUrlByChain: process.env.TOKEN_LIST_URL_1301
+        ? { 1301: process.env.TOKEN_LIST_URL_1301 }
+        : undefined,
+      graphApiKey: process.env.GRAPH_API_KEY,
+      subgraphUrl: process.env.UNISWAP_V4_SUBGRAPH_URL,
+    }
   );
 
   const payload = {
