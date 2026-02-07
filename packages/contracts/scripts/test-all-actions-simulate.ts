@@ -16,13 +16,30 @@
  *   - For limitOrder: same as swap + targetTick, zeroForOne, and pool with LimitOrderHook (hooksAddress)
  */
 
+import { config } from 'dotenv';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { createPublicClient, decodeFunctionData, http, type Address } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { unichainSepolia } from '../src/chains';
 import type { ExecutionPayload } from '@uniforum/shared';
 import { buildCalldataForPayload, UNIVERSAL_ROUTER_ABI } from './build-execution-calldata';
 
+// Load root .env.local so TEST_EXECUTOR_PRIVATE_KEY etc. are available when run via pnpm from repo root
+const __dirname = dirname(fileURLToPath(import.meta.url));
+config({ path: resolve(__dirname, '../../../.env.local') });
+
 const RPC_URL = process.env.UNICHAIN_SEPOLIA_RPC_URL ?? 'https://sepolia.unichain.org';
+
+/** Known revert selectors (Universal Router / execution layer) for clearer error messages */
+const KNOWN_ERROR_SELECTORS: Record<string, string> = {
+  '0x2c4029e9':
+    'ExecutionFailed(uint256,bytes) — inner command failed (e.g. invalid pool/currencies)',
+  '0x5d1d0f9f':
+    'Custom error 0x5d1d0f9f — often from Position Manager (e.g. invalid tokenId or position)',
+  '0x486aa307':
+    'PoolNotInitialized() — no pool exists for this currency0/currency1/fee/tickSpacing (or placeholder 0x0). Use real pool addresses.',
+};
 
 /** Enriched execution payloads for simulation (params include v4 pool key, etc.) */
 const SAMPLE_PAYLOADS = {
@@ -145,9 +162,20 @@ async function main() {
 
   const transport = http(RPC_URL);
   const publicClient = createPublicClient({ chain: unichainSepolia, transport });
-  const account = privateKeyToAccount(
-    '0x0000000000000000000000000000000000000000000000000000000000000001' as `0x${string}`
-  );
+  const privateKey = process.env.TEST_EXECUTOR_PRIVATE_KEY as `0x${string}` | undefined;
+  const account = privateKey
+    ? privateKeyToAccount(privateKey)
+    : privateKeyToAccount(
+        '0x0000000000000000000000000000000000000000000000000000000000000001' as `0x${string}`
+      );
+  const isDummyAccount = !privateKey;
+  if (privateKey) {
+    console.log('Using executor account from TEST_EXECUTOR_PRIVATE_KEY for simulation.\n');
+  } else {
+    console.log(
+      'Using dummy account (no TEST_EXECUTOR_PRIVATE_KEY). Swap/limitOrder simulated with value=0, so they may revert with "insufficient ETH" (0x486aa307) until you set TEST_EXECUTOR_PRIVATE_KEY.\n'
+    );
+  }
 
   for (const [name, payload] of Object.entries(SAMPLE_PAYLOADS)) {
     console.log(`--- ${name} ---`);
@@ -167,6 +195,7 @@ async function main() {
     }
     const args = decoded.args as [`0x${string}`, `0x${string}`[], bigint];
 
+    const simValue = isDummyAccount ? 0n : (value ?? 0n);
     try {
       await publicClient.simulateContract({
         address: to as Address,
@@ -174,12 +203,18 @@ async function main() {
         functionName: 'execute',
         args,
         account,
-        value: value ?? 0n,
+        value: simValue,
       });
       console.log('  simulate: OK');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      const selectorMatch = msg.match(/0x[a-fA-F0-9]{8}/);
+      const knownName =
+        selectorMatch && KNOWN_ERROR_SELECTORS[selectorMatch[0].toLowerCase()]
+          ? KNOWN_ERROR_SELECTORS[selectorMatch[0].toLowerCase()]
+          : '';
       console.log('  simulate: REVERT:', msg.slice(0, 120) + (msg.length > 120 ? '...' : ''));
+      if (knownName) console.log('  Decoded:', knownName);
       console.log(
         '  (Expected with placeholder 0x0 addresses; use real pool/position data for success.)'
       );
