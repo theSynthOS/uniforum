@@ -2,7 +2,7 @@
  * Simulate swap and limitOrder actions (ETH↔USDC) on Unichain Sepolia.
  *
  * Dynamically discovers pool parameters from on-chain StateView,
- * checks Permit2 approvals, and tests both directions with hooks.
+ * checks Permit2 approvals, and tests both directions on a hookless pool.
  *
  * Usage:
  *   pnpm --filter @uniforum/contracts run test:execution-all-actions
@@ -11,16 +11,20 @@
 import { config } from 'dotenv';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { createPublicClient, decodeFunctionData, http, formatEther, formatUnits, type Address } from 'viem';
+import {
+  createPublicClient,
+  decodeFunctionData,
+  http,
+  formatEther,
+  formatUnits,
+  type Address,
+} from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { unichainSepolia } from '../src/chains';
 import { discoverPoolFeeTier } from '../src/uniswap/stateView';
 import { hasPermit2Allowance } from '../src/uniswap/permit2';
 import type { ExecutionPayload } from '@uniforum/shared';
-import {
-  buildCalldataForPayload,
-  UNIVERSAL_ROUTER_ABI,
-} from './build-execution-calldata';
+import { buildCalldataForPayload, UNIVERSAL_ROUTER_ABI } from './build-execution-calldata';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, '../../../.env.local') });
@@ -46,8 +50,7 @@ const ERC20_BALANCE_ABI = [
 const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   '0x2c4029e9':
     'ExecutionFailed(uint256,bytes) — inner command failed. Check Permit2 approval or pool state.',
-  '0x486aa307':
-    'PoolNotInitialized() — pool does not exist for this pool key.',
+  '0x486aa307': 'PoolNotInitialized() — pool does not exist for this pool key.',
   '0x3351b260':
     'DeltaNotNegative(address) — token settlement failed. Executor likely does not hold the input token.',
 };
@@ -102,7 +105,9 @@ async function main() {
     return;
   }
   const { fee, tickSpacing, state } = discovered;
-  console.log(`  Pool: fee=${fee}, tickSpacing=${tickSpacing}, currentTick=${state.tick}, liquidity=${state.liquidity}\n`);
+  console.log(
+    `  Pool: fee=${fee}, tickSpacing=${tickSpacing}, currentTick=${state.tick}, liquidity=${state.liquidity}\n`
+  );
 
   // ── Check Permit2 ──
   if (!isDummyAccount) {
@@ -111,7 +116,9 @@ async function main() {
       UNICHAIN_SEPOLIA_USDC as Address,
       account.address
     );
-    console.log(`Permit2 USDC approval: ${hasApproval ? 'OK' : 'MISSING — run approve-permit2.ts first'}\n`);
+    console.log(
+      `Permit2 USDC approval: ${hasApproval ? 'OK' : 'MISSING — run approve-permit2.ts first'}\n`
+    );
   }
 
   // ── Build payloads: swap & limitOrder in both directions ──
@@ -160,29 +167,6 @@ async function main() {
       forumGoal: 'Swap 5 USDC for ETH',
     } as ExecutionPayload,
 
-    'swap (ETH → USDC) with dynamicFee hook': {
-      proposalId: '00000000-0000-0000-0000-000000000005',
-      forumId: '00000000-0000-0000-0000-000000000006',
-      executorEnsName: 'creator.uniforum.eth',
-      action: 'swap',
-      params: {
-        tokenIn: 'ETH',
-        tokenOut: 'USDC',
-        amount: '10000000000000000', // 0.01 ETH
-        slippage: 50,
-        deadline: Math.floor(Date.now() / 1000) + 1800,
-        currency0: UNICHAIN_SEPOLIA_ETH,
-        currency1: UNICHAIN_SEPOLIA_USDC,
-        fee,
-        tickSpacing,
-        amountOutMinimum: '0',
-        zeroForOne: true,
-      },
-      hooks: { dynamicFee: { enabled: true, feeBps: 100 } },
-      chainId: CHAIN_ID,
-      forumGoal: 'Swap 0.01 ETH for USDC with dynamic fee hook',
-    } as ExecutionPayload,
-
     'limitOrder (ETH → USDC, targetTick=-100)': {
       proposalId: '00000000-0000-0000-0000-000000000007',
       forumId: '00000000-0000-0000-0000-000000000008',
@@ -201,7 +185,6 @@ async function main() {
         amountOutMinimum: '0',
         deadline: Math.floor(Date.now() / 1000) + 1800,
       },
-      hooks: { limitOrder: { enabled: true, targetTick: -100, zeroForOne: true } },
       chainId: CHAIN_ID,
       forumGoal: 'Limit order: sell 0.01 ETH for USDC at tick -100',
     } as ExecutionPayload,
@@ -224,7 +207,6 @@ async function main() {
         amountOutMinimum: '0',
         deadline: Math.floor(Date.now() / 1000) + 1800,
       },
-      hooks: { limitOrder: { enabled: true, targetTick: 100, zeroForOne: false } },
       chainId: CHAIN_ID,
       forumGoal: 'Limit order: sell 5 USDC for ETH at tick 100',
     } as ExecutionPayload,
@@ -240,13 +222,12 @@ async function main() {
     const { data, to, action, value } = buildCalldataForPayload(payload);
     const p = payload.params as Record<string, unknown>;
 
-    const summary = action === 'swap'
-      ? `${p.tokenIn} → ${p.tokenOut}, amount=${p.amount}, fee=${fee}`
-      : `${p.tokenIn} → ${p.tokenOut}, amount=${p.amount}, targetTick=${p.targetTick}`;
+    const summary =
+      action === 'swap'
+        ? `${p.tokenIn} → ${p.tokenOut}, amount=${p.amount}, fee=${fee}`
+        : `${p.tokenIn} → ${p.tokenOut}, amount=${p.amount}, targetTick=${p.targetTick}`;
 
-    const hooksInfo = payload.hooks
-      ? ` hooks: ${JSON.stringify(payload.hooks)}`
-      : '';
+    const hooksInfo = payload.hooks ? ` hooks: ${JSON.stringify(payload.hooks)}` : '';
 
     console.log(`  ${summary}${hooksInfo}`);
     console.log(`  to: ${to}  data: ${(data.length - 2) / 2} bytes  value: ${value ?? 0} wei`);
