@@ -13,6 +13,14 @@ export interface AgentDiscussionContext {
   riskTolerance: number;
   preferredPools: string[];
   expertiseContext?: string;
+  rulesOfThumb?: string[];
+  constraints?: Record<string, unknown>;
+  objectiveWeights?: Record<string, number>;
+  debate?: {
+    enabled?: boolean;
+    rounds?: number;
+    delayMs?: number;
+  };
 }
 
 export interface DiscussionContext {
@@ -44,6 +52,9 @@ Your Profile:
 - Risk Tolerance: ${(agent.riskTolerance * 100).toFixed(0)}%
 - Preferred Pools: ${agent.preferredPools.join(', ')}
 - Expertise: ${agent.expertiseContext || 'General DeFi knowledge'}
+${agent.rulesOfThumb?.length ? `- Rules of Thumb: ${agent.rulesOfThumb.join(' | ')}` : ''}
+${agent.constraints ? `- Constraints: ${JSON.stringify(agent.constraints)}` : ''}
+${agent.objectiveWeights ? `- Objective Weights: ${JSON.stringify(agent.objectiveWeights)}` : ''}
 
 Forum Context:
 - Title: ${context.forum.title}
@@ -61,6 +72,45 @@ Instructions:
 3. If suggesting a specific strategy, include concrete numbers
 4. Reference other agents' points if relevant
 5. Stay in character based on your ${agent.strategy} strategy
+
+Your response:
+`.trim();
+}
+
+/**
+ * Build a prompt for a debate follow-up response (counterpoint / critique).
+ */
+export function buildDebatePrompt(
+  agent: AgentDiscussionContext,
+  context: DiscussionContext
+): string {
+  const recentMessagesText = context.recentMessages
+    .slice(-5)
+    .map((m) => `${m.agentEnsName}: ${m.content}`)
+    .join('\n');
+
+  return `
+You are ${agent.name} (${agent.ensName}), providing a follow-up critique or alternative view.
+
+Your Profile:
+- Strategy: ${agent.strategy}
+- Risk Tolerance: ${(agent.riskTolerance * 100).toFixed(0)}%
+- Preferred Pools: ${agent.preferredPools.join(', ')}
+${agent.rulesOfThumb?.length ? `- Rules of Thumb: ${agent.rulesOfThumb.join(' | ')}` : ''}
+${agent.constraints ? `- Constraints: ${JSON.stringify(agent.constraints)}` : ''}
+
+Forum Context:
+- Title: ${context.forum.title}
+- Goal: ${context.forum.goal}
+- Pool Focus: ${context.forum.pool || 'General'}
+
+Recent Messages:
+${recentMessagesText || '(No messages yet)'}
+
+Instructions:
+1. Offer a critique, counterpoint, or refinement to prior points
+2. Provide at least one concrete numeric or parameter suggestion
+3. Keep it concise (2-3 sentences)
 
 Your response:
 `.trim();
@@ -98,6 +148,11 @@ export function shouldParticipate(
     return { should: true, reason: 'Agent was mentioned in discussion' };
   }
 
+  // If the forum is pool-specific and this agent doesn't match, skip.
+  if (forum.pool && !matchesPool) {
+    return { should: false, reason: 'Forum pool mismatch' };
+  }
+
   // Rate limit: don't respond too frequently
   const agentLastMessage = recentMessages.filter((m) => m.agentEnsName === agent.ensName).pop();
 
@@ -110,8 +165,8 @@ export function shouldParticipate(
     }
   }
 
-  // Randomly participate sometimes (20% chance)
-  if (Math.random() < 0.2) {
+  // Randomly participate sometimes (20% chance) for general forums
+  if (!forum.pool && Math.random() < 0.2) {
     return { should: true, reason: 'Random participation' };
   }
 
