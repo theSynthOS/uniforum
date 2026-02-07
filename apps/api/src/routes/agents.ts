@@ -2,8 +2,10 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { getSupabase } from '../lib/supabase';
 import { ENS_CONFIG } from '@uniforum/shared';
-import { buildEnsTextRecords } from '@uniforum/contracts';
+import { buildEnsTextRecords, encryptPrivateKey } from '@uniforum/contracts';
+import { AGENT_PLUGIN_ALLOWLIST } from '@uniforum/shared/constants';
 import { authMiddleware, optionalAuthMiddleware, AuthUser } from '../lib/auth';
+import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 
 export const agentsRoutes = new Hono<{
   Variables: {
@@ -46,6 +48,137 @@ const updateAgentSchema = z.object({
   preferredPools: z.array(z.string()).min(1).optional(),
   expertiseContext: z.string().max(2000).optional(),
 });
+
+const uploadAgentSchema = createAgentSchema.extend({
+  characterConfig: z.record(z.any()),
+  plugins: z.array(z.string()).optional(),
+});
+
+const DEFAULT_PLUGIN_SET = new Set(AGENT_PLUGIN_ALLOWLIST);
+
+function sanitizeCharacterConfig(input: Record<string, any>) {
+  const sanitized: Record<string, any> = {};
+
+  const pickStringArray = (value: unknown) =>
+    Array.isArray(value) ? value.filter((item) => typeof item === 'string') : undefined;
+
+  if (typeof input.bio === 'string' || Array.isArray(input.bio)) {
+    const bio = Array.isArray(input.bio) ? pickStringArray(input.bio) : input.bio;
+    if (bio && (Array.isArray(bio) ? bio.length > 0 : bio.trim().length > 0)) {
+      sanitized.bio = bio;
+    }
+  }
+
+  const adjectives = pickStringArray(input.adjectives);
+  if (adjectives && adjectives.length > 0) sanitized.adjectives = adjectives;
+
+  const topics = pickStringArray(input.topics);
+  if (topics && topics.length > 0) sanitized.topics = topics;
+
+  const knowledge = pickStringArray(input.knowledge);
+  if (knowledge && knowledge.length > 0) sanitized.knowledge = knowledge;
+
+  if (typeof input.system === 'string' && input.system.trim().length > 0) {
+    sanitized.system = input.system.trim();
+  }
+
+  if (input.templates && typeof input.templates === 'object' && !Array.isArray(input.templates)) {
+    const templates: Record<string, string> = {};
+    for (const [key, value] of Object.entries(input.templates)) {
+      if (typeof value === 'string') templates[key] = value;
+    }
+    if (Object.keys(templates).length > 0) sanitized.templates = templates;
+  }
+
+  if (Array.isArray(input.messageExamples)) sanitized.messageExamples = input.messageExamples;
+  if (Array.isArray(input.postExamples)) sanitized.postExamples = pickStringArray(input.postExamples);
+
+  if (input.style && typeof input.style === 'object' && !Array.isArray(input.style)) {
+    const style: Record<string, string[]> = {};
+    for (const [key, value] of Object.entries(input.style)) {
+      const arr = pickStringArray(value);
+      if (arr && arr.length > 0) style[key] = arr;
+    }
+    if (Object.keys(style).length > 0) sanitized.style = style;
+  }
+
+  if (input.settings && typeof input.settings === 'object' && !Array.isArray(input.settings)) {
+    const settings = input.settings as Record<string, any>;
+    const allowedSettings: Record<string, any> = {};
+    if (typeof settings.model === 'string') allowedSettings.model = settings.model;
+    if (typeof settings.temperature === 'number') allowedSettings.temperature = settings.temperature;
+    if (typeof settings.maxTokens === 'number') allowedSettings.maxTokens = settings.maxTokens;
+    if (typeof settings.memoryLimit === 'number') allowedSettings.memoryLimit = settings.memoryLimit;
+    if (typeof settings.conversationLength === 'number')
+      allowedSettings.conversationLength = settings.conversationLength;
+    if (typeof settings.responseTimeout === 'number')
+      allowedSettings.responseTimeout = settings.responseTimeout;
+    if (Object.keys(allowedSettings).length > 0) sanitized.settings = allowedSettings;
+  }
+
+  if (Array.isArray((input as any).rulesOfThumb)) {
+    const rules = (input as any).rulesOfThumb.filter((item: unknown) => typeof item === 'string');
+    if (rules.length > 0) sanitized.rulesOfThumb = rules;
+  }
+
+  if ((input as any).constraints && typeof (input as any).constraints === 'object') {
+    sanitized.constraints = (input as any).constraints;
+  }
+
+  if ((input as any).objectiveWeights && typeof (input as any).objectiveWeights === 'object') {
+    const weights: Record<string, number> = {};
+    for (const [key, value] of Object.entries((input as any).objectiveWeights)) {
+      if (typeof value === 'number') weights[key] = value;
+    }
+    if (Object.keys(weights).length > 0) sanitized.objectiveWeights = weights;
+  }
+
+  if ((input as any).debate && typeof (input as any).debate === 'object') {
+    const debate = (input as any).debate as Record<string, unknown>;
+    const sanitizedDebate: Record<string, unknown> = {};
+    if (typeof debate.enabled === 'boolean') sanitizedDebate.enabled = debate.enabled;
+    if (typeof debate.rounds === 'number') sanitizedDebate.rounds = Math.max(1, debate.rounds);
+    if (typeof debate.delayMs === 'number') sanitizedDebate.delayMs = Math.max(250, debate.delayMs);
+    if (Object.keys(sanitizedDebate).length > 0) sanitized.debate = sanitizedDebate;
+  }
+
+  if (typeof (input as any).temperatureDelta === 'number') {
+    sanitized.temperatureDelta = (input as any).temperatureDelta;
+  }
+
+  return sanitized;
+}
+
+function normalizePlugins(plugins: string[] | undefined) {
+  const filtered =
+    plugins?.filter((plugin) => DEFAULT_PLUGIN_SET.has(plugin as (typeof AGENT_PLUGIN_ALLOWLIST)[number])) ||
+    [];
+
+  const required = new Set(filtered);
+  required.add('@elizaos/plugin-node');
+  if (process.env.OPENAI_API_KEY) {
+    required.add('@elizaos/plugin-openai');
+  }
+
+  return Array.from(required);
+}
+
+function createEncryptedAgentWallet() {
+  const encryptionKey = process.env.ENCRYPTION_KEY;
+  if (!encryptionKey) {
+    throw new Error('ENCRYPTION_KEY must be set to encrypt agent private keys');
+  }
+
+  const privateKey = generatePrivateKey();
+  const account = privateKeyToAccount(privateKey);
+  const encryptedPrivateKey = encryptPrivateKey(privateKey, encryptionKey);
+
+  return {
+    privateKey,
+    address: account.address,
+    encryptedPrivateKey,
+  };
+}
 
 // GET /agents - List all agents
 agentsRoutes.get('/', optionalAuthMiddleware, async (c) => {
@@ -158,8 +291,7 @@ agentsRoutes.post('/', authMiddleware, async (c) => {
     return c.json({ error: 'Agent name already taken' }, 409);
   }
 
-  // Create agent wallet (in production, this would generate a real wallet)
-  const agentWalletAddress = `0x${Buffer.from(crypto.getRandomValues(new Uint8Array(20))).toString('hex')}`;
+  const { address: agentWalletAddress, encryptedPrivateKey } = createEncryptedAgentWallet();
 
   // Insert agent
   const { data: agent, error: insertError } = await supabase
@@ -172,6 +304,7 @@ agentsRoutes.post('/', authMiddleware, async (c) => {
       preferred_pools: preferredPools,
       expertise_context: expertiseContext || '',
       status: 'active',
+      config_source: 'template',
     })
     .select()
     .single();
@@ -185,7 +318,7 @@ agentsRoutes.post('/', authMiddleware, async (c) => {
   await supabase.from('agent_wallets').insert({
     agent_id: agent.id,
     wallet_address: agentWalletAddress,
-    // In production, encrypted_private_key would be set here
+    encrypted_private_key: encryptedPrivateKey,
   });
 
   // Initialize metrics
@@ -213,6 +346,123 @@ agentsRoutes.post('/', authMiddleware, async (c) => {
       preferredPools: agent.preferred_pools,
       status: agent.status,
       createdAt: agent.created_at,
+      ens: {
+        name: (agent as any).full_ens_name || fullEnsName,
+        parentDomain: ENS_CONFIG.PARENT_DOMAIN,
+        gatewayUrl: ENS_CONFIG.GATEWAY_URL,
+        resolverType: 'offchain-ccip-read',
+        address: agentWalletAddress,
+        textRecords: {
+          ...ensTextRecords,
+          'eth.uniforum.owner': agent.owner_address,
+        },
+      },
+    },
+    201
+  );
+});
+
+// POST /agents/upload - Create agent with uploaded character config
+agentsRoutes.post('/upload', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const supabase = getSupabase();
+
+  let body;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const parsed = uploadAgentSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json(
+      {
+        error: 'Validation failed',
+        details: parsed.error.flatten().fieldErrors,
+      },
+      400
+    );
+  }
+
+  const { name, strategy, riskTolerance, preferredPools, expertiseContext, characterConfig, plugins } =
+    parsed.data;
+  const { subdomain, full: fullEnsName } = normalizeEnsInput(name);
+
+  const { data: existing } = await supabase
+    .from('agents')
+    .select('id')
+    .eq('ens_name', subdomain)
+    .single();
+
+  if (existing) {
+    return c.json({ error: 'Agent name already taken' }, 409);
+  }
+
+  const sanitizedConfig = sanitizeCharacterConfig(characterConfig);
+  const sanitizedPlugins = normalizePlugins(plugins);
+
+  const serialized = JSON.stringify(sanitizedConfig);
+  if (serialized.length > 50_000) {
+    return c.json({ error: 'characterConfig is too large (max 50KB)' }, 400);
+  }
+
+  const { address: agentWalletAddress, encryptedPrivateKey } = createEncryptedAgentWallet();
+
+  const { data: agent, error: insertError } = await supabase
+    .from('agents')
+    .insert({
+      ens_name: subdomain,
+      owner_address: user.walletAddress,
+      strategy,
+      risk_tolerance: riskTolerance,
+      preferred_pools: preferredPools,
+      expertise_context: expertiseContext || '',
+      status: 'active',
+      config_source: 'upload',
+      character_config: sanitizedConfig,
+      character_plugins: sanitizedPlugins,
+    })
+    .select()
+    .single();
+
+  if (insertError) {
+    console.error('[agents] Upload create error:', insertError);
+    return c.json({ error: 'Failed to create agent', message: insertError.message }, 500);
+  }
+
+  await supabase.from('agent_wallets').insert({
+    agent_id: agent.id,
+    wallet_address: agentWalletAddress,
+    encrypted_private_key: encryptedPrivateKey,
+  });
+
+  await supabase.from('agent_metrics').insert({
+    agent_id: agent.id,
+  });
+
+  const ensTextRecords = buildEnsTextRecords({
+    strategy: agent.strategy,
+    riskTolerance: agent.risk_tolerance,
+    preferredPools: agent.preferred_pools,
+    expertiseContext: agent.expertise_context || '',
+    agentWallet: agentWalletAddress,
+    createdAt: new Date(agent.created_at),
+  });
+
+  return c.json(
+    {
+      id: agent.id,
+      ensName: (agent as any).full_ens_name || fullEnsName,
+      ownerAddress: agent.owner_address,
+      agentWallet: agentWalletAddress,
+      strategy: agent.strategy,
+      riskTolerance: agent.risk_tolerance,
+      preferredPools: agent.preferred_pools,
+      status: agent.status,
+      createdAt: agent.created_at,
+      configSource: 'upload',
+      characterPlugins: sanitizedPlugins,
       ens: {
         name: (agent as any).full_ens_name || fullEnsName,
         parentDomain: ENS_CONFIG.PARENT_DOMAIN,

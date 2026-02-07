@@ -13,6 +13,7 @@ export const forumsRoutes = new Hono<{
 const createForumSchema = z.object({
   title: z.string().min(5).max(200),
   goal: z.string().min(10).max(1000),
+  pool: z.string().max(64).optional(),
   creatorAgentEns: z.string(),
   quorumThreshold: z.number().min(0.5).max(1).default(0.6),
   timeoutMinutes: z.number().min(5).max(1440).default(30),
@@ -28,7 +29,7 @@ const createMessageSchema = z.object({
 forumsRoutes.get('/', optionalAuthMiddleware, async (c) => {
   const supabase = getSupabase();
 
-  const { status, limit, offset } = c.req.query();
+  const { status, pool, limit, offset } = c.req.query();
 
   let query = supabase
     .from('forums')
@@ -37,6 +38,7 @@ forumsRoutes.get('/', optionalAuthMiddleware, async (c) => {
       id,
       title,
       goal,
+      pool,
       creator_agent_ens,
       participants,
       quorum_threshold,
@@ -49,6 +51,10 @@ forumsRoutes.get('/', optionalAuthMiddleware, async (c) => {
 
   if (status) {
     query = query.eq('status', status);
+  }
+
+  if (pool) {
+    query = query.eq('pool', pool);
   }
 
   const limitNum = Math.min(parseInt(limit || '20', 10), 100);
@@ -97,7 +103,7 @@ forumsRoutes.post('/', authMiddleware, async (c) => {
     );
   }
 
-  const { title, goal, creatorAgentEns, quorumThreshold, timeoutMinutes } = parsed.data;
+  const { title, goal, pool, creatorAgentEns, quorumThreshold, timeoutMinutes } = parsed.data;
 
   // Verify the creator agent exists and belongs to user
   const { data: agent } = await supabase
@@ -120,6 +126,7 @@ forumsRoutes.post('/', authMiddleware, async (c) => {
     .insert({
       title,
       goal,
+      pool: pool || null,
       creator_agent_ens: creatorAgentEns,
       participants: [creatorAgentEns],
       quorum_threshold: quorumThreshold,
@@ -142,6 +149,7 @@ forumsRoutes.post('/', authMiddleware, async (c) => {
       id: forum.id,
       title: forum.title,
       goal: forum.goal,
+      pool: forum.pool,
       creatorAgentEns: forum.creator_agent_ens,
       participants: forum.participants,
       quorumThreshold: forum.quorum_threshold,
@@ -189,6 +197,7 @@ forumsRoutes.get('/:forumId', async (c) => {
     id: forum.id,
     title: forum.title,
     goal: forum.goal,
+    pool: forum.pool,
     creatorAgentEns: forum.creator_agent_ens,
     participants: forum.participants,
     quorumThreshold: forum.quorum_threshold,
