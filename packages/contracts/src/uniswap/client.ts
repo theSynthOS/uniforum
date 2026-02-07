@@ -8,20 +8,19 @@ import { createPublicClient, createWalletClient, http, type Account, type Chain 
 import { privateKeyToAccount } from 'viem/accounts';
 import { unichainSepolia, unichainMainnet } from '../chains';
 
-// Contract addresses on Unichain
-// TODO: Update with actual deployed addresses
+// Contract addresses from https://docs.uniswap.org/contracts/v4/deployments
 export const UNISWAP_V4_ADDRESSES = {
   [unichainSepolia.id]: {
-    poolManager: '0x...' as `0x${string}`,
-    universalRouter: '0x...' as `0x${string}`,
-    positionManager: '0x...' as `0x${string}`,
-    quoter: '0x...' as `0x${string}`,
+    poolManager: '0x00b036b58a818b1bc34d502d3fe730db729e62ac' as `0x${string}`,
+    universalRouter: '0xf70536b3bcc1bd1a972dc186a2cf84cc6da6be5d' as `0x${string}`,
+    positionManager: '0xf969aee60879c54baaed9f3ed26147db216fd664' as `0x${string}`,
+    quoter: '0x56dcd40a3f2d466f48e7f48bdbe5cc9b92ae4472' as `0x${string}`,
   },
   [unichainMainnet.id]: {
-    poolManager: '0x...' as `0x${string}`,
-    universalRouter: '0x...' as `0x${string}`,
-    positionManager: '0x...' as `0x${string}`,
-    quoter: '0x...' as `0x${string}`,
+    poolManager: '0x1f98400000000000000000000000000000000004' as `0x${string}`,
+    universalRouter: '0xef740bf23acae26f6492b10de645d6b98dc8eaf3' as `0x${string}`,
+    positionManager: '0x4529a01c7a0410167c5740c487a8de60232617bf' as `0x${string}`,
+    quoter: '0x333e3c607b141b18ff6de9f258db6e77fe7491e0' as `0x${string}`,
   },
 } as const;
 
