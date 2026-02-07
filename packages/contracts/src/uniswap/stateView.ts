@@ -102,6 +102,13 @@ export async function getPoolStateByKey(
   return getPoolState(chainId, rpcUrl, poolId);
 }
 
+export interface DiscoveredPool {
+  fee: number;
+  tickSpacing: number;
+  poolId: `0x${string}`;
+  state: PoolState;
+}
+
 /**
  * Discover which fee tier exists for a pair by trying StateView.getSlot0 for each tier.
  * Returns { fee, tickSpacing, poolId, state } for the first initialized pool, or null.
@@ -112,7 +119,7 @@ export async function discoverPoolFeeTier(
   currency0: string,
   currency1: string,
   hooks?: string
-): Promise<{ fee: number; tickSpacing: number; poolId: `0x${string}`; state: PoolState } | null> {
+): Promise<DiscoveredPool | null> {
   for (const { fee, tickSpacing } of FEE_TIERS) {
     const key: PoolKeyForId = {
       currency0,
@@ -128,4 +135,33 @@ export async function discoverPoolFeeTier(
     }
   }
   return null;
+}
+
+/**
+ * Discover ALL initialized pools for a token pair across every standard fee tier.
+ * Returns an array of { fee, tickSpacing, poolId, state } sorted by fee ascending.
+ */
+export async function discoverAllPools(
+  chainId: number,
+  rpcUrl: string,
+  currency0: string,
+  currency1: string,
+  hooks?: string
+): Promise<DiscoveredPool[]> {
+  const results: DiscoveredPool[] = [];
+  // Query all tiers in parallel for speed
+  const promises = FEE_TIERS.map(async ({ fee, tickSpacing }) => {
+    const key: PoolKeyForId = { currency0, currency1, fee, tickSpacing, hooks };
+    const poolId = getPoolId(key);
+    const state = await getPoolState(chainId, rpcUrl, poolId);
+    if (state != null) {
+      return { fee, tickSpacing, poolId, state };
+    }
+    return null;
+  });
+  const settled = await Promise.all(promises);
+  for (const result of settled) {
+    if (result) results.push(result);
+  }
+  return results;
 }
