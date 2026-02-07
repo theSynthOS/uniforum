@@ -66,6 +66,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@noble/curves':
+        specifier: ^1.8.0
+        version: 1.9.7
       '@privy-io/server-auth':
         specifier: ^1.0.0
         version: 1.32.5(bufferutil@4.1.0)(encoding@0.1.13)(ethers@5.8.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typescript@5.9.3)(utf-8-validate@5.0.10)(viem@2.45.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
@@ -84,6 +87,9 @@ importers:
       hono:
         specifier: ^4.0.0
         version: 4.11.7
+      viem:
+        specifier: ^2.7.0
+        version: 2.45.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
       zod:
         specifier: ^3.22.0
         version: 3.25.76
@@ -198,6 +204,9 @@ importers:
         specifier: ^2.7.0
         version: 2.45.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
     devDependencies:
+      solc:
+        specifier: ^0.8.30
+        version: 0.8.33
       typescript:
         specifier: ^5.3.0
         version: 5.9.3
@@ -7478,6 +7487,11 @@ packages:
     engines: {node: '>=10.0.0'}
     hasBin: true
 
+  solc@0.8.33:
+    resolution: {integrity: sha512-qPdHuAeg+DccqYz4Mq4grc7lOdgLA8wB8meCrMHcVXj70noKZhfAMzOCcOD/4RODZnn+sV3V6fWEyUkeVaBPVQ==}
+    engines: {node: '>=12.0.0'}
+    hasBin: true
+
   sonic-boom@2.8.0:
     resolution: {integrity: sha512-kuonw1YOYYNOve5iHdSahXPOK49GqwA+LZhI6Wz/l0rP57iKyXXIHaRagOBHAPmGwJC6od2Z9zgvZ5loSgMlVg==}
 
@@ -11911,7 +11925,7 @@ snapshots:
 
   '@scure/bip32@1.7.0':
     dependencies:
-      '@noble/curves': 1.9.1
+      '@noble/curves': 1.9.7
       '@noble/hashes': 1.8.0
       '@scure/base': 1.2.6
 
@@ -17697,9 +17711,9 @@ snapshots:
       '@adraffy/ens-normalize': 1.11.1
       '@noble/curves': 1.9.7
       '@noble/hashes': 1.8.0
-      '@scure/bip32': 1.6.2
-      '@scure/bip39': 1.5.4
-      abitype: 1.0.8(typescript@5.9.3)(zod@4.3.6)
+      '@scure/bip32': 1.7.0
+      '@scure/bip39': 1.6.0
+      abitype: 1.2.3(typescript@5.9.3)(zod@4.3.6)
       eventemitter3: 5.0.1
     optionalDependencies:
       typescript: 5.9.3
@@ -18810,6 +18824,18 @@ snapshots:
       command-exists: 1.2.9
       commander: 8.3.0
       follow-redirects: 1.15.11(debug@4.4.3)
+      js-sha3: 0.8.0
+      memorystream: 0.3.1
+      semver: 5.7.2
+      tmp: 0.0.33
+    transitivePeerDependencies:
+      - debug
+
+  solc@0.8.33:
+    dependencies:
+      command-exists: 1.2.9
+      commander: 8.3.0
+      follow-redirects: 1.15.11(debug@4.3.7)
       js-sha3: 0.8.0
       memorystream: 0.3.1
       semver: 5.7.2
