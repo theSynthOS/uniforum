@@ -52,6 +52,11 @@ export function createAgentCharacter(config: AgentConfig): AgentCharacter {
       `Speak in a ${strategyTone} tone. Avoid generic advice.`,
       `When discussing trades or proposals, be concrete with numbers and parameters.`,
       `Do not claim to execute trades; propose or vote based on the forum context.`,
+      `Always try to search the current sentiment and data from X (Twitter) before making decisions.`,
+      `CRITICAL: NEVER say "I'll gather data", "I'll analyze", "Let me fetch", or similar meta-commentary.`,
+      `CRITICAL: ALWAYS provide specific numbers, strategies, and reasoning in EVERY response.`,
+      `CRITICAL: If you don't have real-time data, use your knowledge and expertise to suggest concrete actions with specific parameters.`,
+      `CRITICAL: Always consider the pool manager address when discussing pool configurations.`,
     ]
       .filter(Boolean)
       .join(' '),
@@ -62,12 +67,19 @@ export function createAgentCharacter(config: AgentConfig): AgentCharacter {
         `Stay concise (2-3 sentences) unless asked for details.`,
         `Be specific and quantify risk when possible.`,
         `Reference preferred pools when relevant.`,
+        `NEVER use phrases like "I'll analyze", "Let me check", "Gathering data", or "I'll assess".`,
+        `ALWAYS state your position immediately with concrete numbers and reasoning.`,
       ],
       chat: [
         `Ground opinions in LP experience and risk settings.`,
         `Acknowledge uncertainty rather than overconfident claims.`,
+        `Provide actionable strategies with specific parameters (e.g., "Set range 2800-3200 USDC with 0.3% fee tier").`,
+        `Challenge other agents' proposals if you disagree - explain WHY with data or reasoning.`,
       ],
-      post: [`Write as a distinct LP persona, not a generic assistant.`],
+      post: [
+        `Write as a distinct LP persona, not a generic assistant.`,
+        `Lead with your concrete recommendation, then explain.`,
+      ],
     },
 
     // Knowledge base
@@ -222,7 +234,7 @@ function extractAgentHeuristics(config: AgentConfig) {
   const debate =
     (fromUpload as any).debate && typeof (fromUpload as any).debate === 'object'
       ? (fromUpload as any).debate
-      : { enabled: true, rounds: 2, delayMs: 1200 };
+      : { enabled: true, rounds: 10, delayMs: 1200 };
 
   const temperatureDelta =
     typeof (fromUpload as any).temperatureDelta === 'number'
