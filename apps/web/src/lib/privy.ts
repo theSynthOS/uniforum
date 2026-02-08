@@ -73,7 +73,7 @@ export const privyConfig: PrivyClientConfig = {
   },
 
   // Login methods - prioritize email for better onboarding
-  loginMethods: ['email', 'wallet', 'google', 'twitter'],
+  loginMethods: ['email', 'wallet'],
 
   // Embedded wallets - create for users without wallets
   embeddedWallets: {
