@@ -27,6 +27,7 @@ export function getSupabase(): SupabaseClient {
   }
 
   const supabaseUrl = normalizeSupabaseUrl(rawUrl);
+  console.log(`[api] Supabase client init → ${supabaseUrl}`);
   supabaseClient = createClient(supabaseUrl, supabaseKey, {
     auth: {
       autoRefreshToken: false,

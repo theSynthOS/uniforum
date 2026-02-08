@@ -53,6 +53,18 @@ async function main() {
   // Initialize Supabase client
   const supabase = createSupabaseClient();
 
+  // Sanity check: verify Supabase is reachable before proceeding
+  console.log(`[agents] Supabase URL: ${process.env.SUPABASE_URL ?? 'not set'}`);
+  const start = Date.now();
+  const { error: pingError } = await supabase.from('agents').select('id', { count: 'exact', head: true });
+  const latency = Date.now() - start;
+
+  if (pingError) {
+    console.error(`[agents] Supabase connection FAILED (${latency}ms):`, pingError.message);
+    throw new Error(`Supabase unreachable: ${pingError.message}`);
+  }
+  console.log(`[agents] Supabase connection OK (${latency}ms)`);
+
   // Initialize agent manager
   const manager = new AgentManager(supabase);
 

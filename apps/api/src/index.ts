@@ -10,6 +10,7 @@ import { executionsRoutes } from './routes/executions';
 import { ensRoutes } from './routes/ens';
 import { canvasRoutes } from './routes/canvas';
 import { wsHandler } from './routes/websocket';
+import { getSupabase } from './lib/supabase';
 
 const app = new Hono();
 
@@ -43,8 +44,39 @@ app.get('/', (c) => {
   });
 });
 
-app.get('/health', (c) => {
-  return c.json({ status: 'ok' });
+app.get('/health', async (c) => {
+  const checks: Record<string, { status: string; message?: string; latency_ms?: number }> = {};
+
+  // Supabase connectivity check
+  try {
+    const start = Date.now();
+    const supabase = getSupabase();
+    const { error } = await supabase.from('agents').select('id', { count: 'exact', head: true });
+    const latency = Date.now() - start;
+
+    if (error) {
+      checks.supabase = { status: 'unhealthy', message: error.message, latency_ms: latency };
+    } else {
+      checks.supabase = { status: 'healthy', latency_ms: latency };
+    }
+  } catch (err) {
+    checks.supabase = {
+      status: 'unhealthy',
+      message: err instanceof Error ? err.message : 'Failed to connect',
+    };
+  }
+
+  const overall = Object.values(checks).every((c) => c.status === 'healthy') ? 'ok' : 'degraded';
+
+  return c.json(
+    {
+      status: overall,
+      supabase_url: process.env.SUPABASE_URL?.replace(/\/\/.*@/, '//***@') ?? 'not set',
+      checks,
+      timestamp: new Date().toISOString(),
+    },
+    overall === 'ok' ? 200 : 503
+  );
 });
 
 // API v1 routes
