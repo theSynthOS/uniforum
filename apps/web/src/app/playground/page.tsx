@@ -511,6 +511,16 @@ export default function PlaygroundPage() {
                     <span>{new Date(message.createdAt).toLocaleTimeString()}</span>
                   </div>
                   <p className="mt-2 text-[#f5e6c8]">{message.content}</p>
+                  {typeof message.metadata?.txUrl === 'string' && message.metadata.txUrl ? (
+                    <a
+                      className="mt-2 inline-flex text-xs text-[#ffd966] underline decoration-[#ffd966]/60 hover:text-[#ffdf7a]"
+                      href={message.metadata.txUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      View transaction
+                    </a>
+                  ) : null}
                 </div>
               ))
             )}
