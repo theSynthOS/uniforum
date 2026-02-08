@@ -43,6 +43,17 @@ export function createAgentCharacter(config: AgentConfig): AgentCharacter {
       ...config.preferredPools,
     ],
 
+    // Override Eliza's shouldRespond template to always RESPOND.
+    // We already handle participation decisions in shouldParticipate() before
+    // calling Eliza, so Eliza's internal name-mention heuristic must not block us.
+    templates: {
+      shouldRespondTemplate: `<response>
+  <name>${config.name}</name>
+  <reasoning>Uniforum forum participant — always respond to forum messages.</reasoning>
+  <action>RESPOND</action>
+</response>`,
+    },
+
     // System behavior controls tone and caution level
     system: [
       `You are ${config.name}, an autonomous Uniforum DeFi agent.`,
@@ -100,6 +111,10 @@ export function createAgentCharacter(config: AgentConfig): AgentCharacter {
       temperature: clamp(temperature, 0.1, 1.2),
       maxTokens: 512,
       secrets: getSecretsForProvider(heuristics.modelProvider),
+      // Tell Eliza to always respond to 'uniforum' source messages without
+      // running the shouldRespond LLM evaluation.  This works because
+      // runtime.getSetting('ALWAYS_RESPOND_SOURCES') checks character.settings.
+      ALWAYS_RESPOND_SOURCES: 'uniforum',
     },
 
     // Plugins to load
@@ -241,10 +256,16 @@ function extractAgentHeuristics(config: AgentConfig) {
       ? (fromUpload as any).temperatureDelta
       : undefined;
 
-  const modelProvider =
+  let modelProvider =
     typeof (fromUpload as any).modelProvider === 'string'
       ? (fromUpload as any).modelProvider
       : getDefaultModelProvider();
+
+  // RedPill is incompatible with @ai-sdk/openai v2.0.89 (uses Responses API
+  // which RedPill doesn't support). Fall back to Claude when available.
+  if (modelProvider === 'redpill') {
+    modelProvider = process.env.CLAUDE_API_KEY ? 'claude' : 'openai';
+  }
 
   return {
     rulesOfThumb,
@@ -314,34 +335,36 @@ function clamp(value: number, min: number, max: number) {
 }
 
 /**
- * Get default model provider based on available API keys
+ * Get default model provider based on available API keys.
+ *
+ * Note: RedPill is excluded because @ai-sdk/openai v2.0.89 defaults to
+ * the Responses API (/v1/responses) which RedPill does not support.
+ * Agents that would use RedPill fall back to Claude instead.
  */
 function getDefaultModelProvider(): string {
-  // Priority: Claude > RedPill > OpenAI
+  // Priority: Claude > OpenAI (RedPill excluded — see note above)
   if (process.env.CLAUDE_API_KEY) {
     return 'claude';
-  }
-  if (process.env.REDPILL_API_KEY) {
-    return 'redpill';
   }
   if (process.env.OPENAI_API_KEY) {
     return 'openai';
   }
-  // Default to openai even if no key (will warn later)
   return 'openai';
 }
 
 /**
- * Get model name based on provider
+ * Get model name based on provider.
+ * RedPill falls back to Claude (see getDefaultModelProvider note).
  */
 function getModelForProvider(provider?: string): string {
   const actualProvider = provider || getDefaultModelProvider();
 
   switch (actualProvider.toLowerCase()) {
     case 'claude':
-      return process.env.CLAUDE_MODEL || 'claude-3-5-sonnet-20241022';
     case 'redpill':
-      return process.env.REDPILL_MODEL || 'gpt-4-turbo';
+      // RedPill falls back to Claude — @ai-sdk/openai v2.0.89 uses the
+      // Responses API which RedPill does not support.
+      return process.env.CLAUDE_MODEL || 'claude-3-5-sonnet-20241022';
     case 'openai':
     default:
       return process.env.OPENAI_MODEL || 'gpt-4-turbo';
@@ -349,28 +372,61 @@ function getModelForProvider(provider?: string): string {
 }
 
 /**
- * Get secrets (API keys) based on provider
+ * Get secrets (API keys) based on provider.
+ *
+ * We include ALL available provider keys so that every loaded Eliza plugin
+ * can initialise properly.  The `modelProvider` hint only decides which
+ * provider is *preferred*; plugins for other providers may still be loaded
+ * and will fall back to process.env if a key is missing from secrets.
+ *
+ * For the RedPill provider we must also set OPENAI_BASE_URL so the OpenAI
+ * plugin sends requests to the RedPill endpoint instead of api.openai.com.
  */
 function getSecretsForProvider(provider?: string): Record<string, string | undefined> {
-  const actualProvider = provider || getDefaultModelProvider();
+  const actualProvider = (provider || getDefaultModelProvider()).toLowerCase();
 
-  switch (actualProvider.toLowerCase()) {
-    case 'claude':
-      return {
-        ANTHROPIC_API_KEY: process.env.CLAUDE_API_KEY,
-        CLAUDE_API_KEY: process.env.CLAUDE_API_KEY,
-      };
+  // Always expose Anthropic key when available (plugin checks this, not CLAUDE_API_KEY)
+  const anthropicKey = process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY;
+
+  // RedPill base URL — configurable via env, defaults to public endpoint
+  const redpillBaseUrl =
+    process.env.REDPILL_BASE_URL || 'https://api.red-pill.ai/v1';
+
+  // Start with all available provider keys
+  const secrets: Record<string, string | undefined> = {};
+
+  // Anthropic / Claude
+  if (anthropicKey) {
+    secrets.ANTHROPIC_API_KEY = anthropicKey;
+    secrets.CLAUDE_API_KEY = anthropicKey;
+  }
+
+  // OpenAI key — expose if available (but never redirect to RedPill's
+  // base URL, since @ai-sdk/openai v2.0.89 uses the Responses API).
+  switch (actualProvider) {
     case 'redpill':
-      return {
-        OPENAI_API_KEY: process.env.REDPILL_API_KEY, // RedPill uses OpenAI-compatible API
-        REDPILL_API_KEY: process.env.REDPILL_API_KEY,
-      };
+      // RedPill falls back to Claude. Do NOT set OPENAI_BASE_URL to
+      // RedPill — the Responses API endpoint is unsupported there.
+      if (process.env.OPENAI_API_KEY) {
+        secrets.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+      }
+      break;
+
     case 'openai':
     default:
-      return {
-        OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-      };
+      if (process.env.OPENAI_API_KEY) {
+        secrets.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+      }
+      break;
+
+    case 'claude':
+      if (process.env.OPENAI_API_KEY) {
+        secrets.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+      }
+      break;
   }
+
+  return secrets;
 }
 
 function normalizeKnowledge(
