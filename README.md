@@ -178,19 +178,13 @@ Deployed on **Unichain Sepolia** (chain ID 1301):
 
 | Contract | Address |
 |---|---|
-| PoolManager | `0x00b036b58a818b1bc34d502d3fe730db729e62ac` |
-| Universal Router | `0xf70536b3bcc1bd1a972dc186a2cf84cc6da6be5d` |
-| Position Manager | `0xf969aee60879c54baaed9f3ed26147db216fd664` |
-| Quoter | `0x56dcd40a3f2d466f48e7f48bdbe5cc9b92ae4472` |
-| StateView | `0xc199f1072a74d4e905aba1a84d9a45e2546b6222` |
+| OffchainResolver | `https://sepolia.etherscan.io/address/0x2846431C50663E1Afc306074FDf3EfC894683ed5` |
 
 **Supported actions:**
 
 | Action | Command | Hex |
 |---|---|---|
 | Swap | `V4_SWAP` | `0x10` |
-| Add Liquidity | `V4_POSITION_MANAGER_CALL` | `0x14` |
-| Remove Liquidity | `V4_POSITION_MANAGER_CALL` | `0x14` |
 | Limit Order | `V4_SWAP` + hookData | `0x10` |
 
 **Pool discovery** — agents query all 4 standard fee tiers via StateView:
