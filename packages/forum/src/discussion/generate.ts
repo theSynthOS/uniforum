@@ -134,20 +134,59 @@ Your response:
 }
 
 /**
- * Determine if an agent should participate in a discussion
+
+* Determine if an agent should participate in a discussion.
+ *
+ * NOTE: This is only called for agents that are already explicit
+ * forum_participants.  The pool-matching and mention checks therefore
+ * serve as *priority hints*, NOT hard gates.  An agent that was
+ * explicitly joined to a forum should always be allowed to speak;
+ * the only hard gate is the rate-limiter.
  */
 export function shouldParticipate(
   agent: AgentDiscussionContext,
   forum: Forum,
   recentMessages: ForumMessage[],
-  options?: { minIntervalMs?: number }
+  options?: { minIntervalMs?: number; maxAutoMessages?: number }
 ): { should: boolean; reason: string } {
   // Always participate if no messages yet
   if (recentMessages.length === 0) {
     return { should: true, reason: 'Starting discussion' };
   }
 
-  // Check if forum topic matches agent's expertise
+  // Rate limit: don't respond too frequently.
+  // Only count messages the agent *generated* autonomously (source === 'agent-service'),
+  // not API-originated messages (e.g. a user-posted kickoff on behalf of the agent).
+  // NOTE: recentMessages may arrive in any order (often desc by created_at),
+  // so pick the *most recent* auto-message by timestamp rather than by array index.
+  const agentAutoMessages = recentMessages.filter(
+    (m) => m.agentEnsName === agent.ensName && (m.metadata as any)?.source === 'agent-service'
+  );
+  const agentLastAutoMessage = agentAutoMessages.reduce<ForumMessage | null>(
+    (latest, m) =>
+      !latest || new Date(m.createdAt).getTime() > new Date(latest.createdAt).getTime()
+        ? m
+        : latest,
+    null
+  );
+
+  if (agentLastAutoMessage) {
+    const timeSinceLastMessage = Date.now() - new Date(agentLastAutoMessage.createdAt).getTime();
+    const minInterval = Math.max(250, options?.minIntervalMs ?? 30 * 1000);
+
+    if (timeSinceLastMessage < minInterval) {
+      return { should: false, reason: 'Too soon since last message' };
+    }
+  }
+
+  // Limit total autonomous messages per agent to prevent infinite debate loops.
+  // This is a hard cap checked before any other priority hints.
+  const maxAutoMessages = options?.maxAutoMessages ?? 3;
+  if (agentAutoMessages.length >= maxAutoMessages) {
+    return { should: false, reason: `Reached max auto-messages (${maxAutoMessages})` };
+  }
+
+  // Check if forum topic matches agent's expertise (priority hint)
   const forumPool = forum.pool?.toLowerCase() || '';
   const matchesPool = agent.preferredPools.some(
     (p) => p.toLowerCase().includes(forumPool) || forumPool.includes(p.toLowerCase())
@@ -158,37 +197,16 @@ export function shouldParticipate(
   }
 
   // Check if agent was mentioned in recent messages
-  const wasMentioned = recentMessages.some(
-    (m) => m.content.toLowerCase().includes(agent.ensName.toLowerCase())
+  const wasMentioned = recentMessages.some((m) =>
+    m.content.toLowerCase().includes(agent.ensName.toLowerCase())
   );
 
   if (wasMentioned) {
     return { should: true, reason: 'Agent was mentioned in discussion' };
   }
 
-  // If the forum is pool-specific and this agent doesn't match, skip.
-  if (forum.pool && !matchesPool) {
-    return { should: false, reason: 'Forum pool mismatch' };
-  }
-
-  // Rate limit: don't respond too frequently
-  const agentLastMessage = recentMessages.filter((m) => m.agentEnsName === agent.ensName).pop();
-
-  if (agentLastMessage) {
-    const timeSinceLastMessage = Date.now() - new Date(agentLastMessage.createdAt).getTime();
-    const minInterval = Math.max(250, options?.minIntervalMs ?? 30 * 1000);
-
-    if (timeSinceLastMessage < minInterval) {
-      return { should: false, reason: 'Too soon since last message' };
-    }
-  }
-
-  // Randomly participate sometimes (20% chance) for general forums
-  if (!forum.pool && Math.random() < 0.2) {
-    return { should: true, reason: 'Random participation' };
-  }
-
-  return { should: false, reason: 'No relevant trigger' };
+  // Agent is an explicit forum participant — always allow them to speak
+  return { should: true, reason: 'Active forum participant' };
 }
 
 /**
