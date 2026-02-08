@@ -33,7 +33,6 @@ export function createSupabaseClient(): SupabaseClient<Database> {
   }
 
   const supabaseUrl = normalizeSupabaseUrl(rawUrl);
-  console.log(`[agents] Supabase client init → ${supabaseUrl}`);
   supabaseInstance = createClient<Database>(supabaseUrl, supabaseKey, {
     auth: {
       autoRefreshToken: false,
