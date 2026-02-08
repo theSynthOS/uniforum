@@ -195,6 +195,10 @@ function buildDefaultPlugins(plugins?: string[]): string[] {
   if (process.env.OPENAI_API_KEY || process.env.REDPILL_API_KEY) {
     set.add('@elizaos/plugin-openai');
   }
+  // Add Anthropic plugin if Claude API key is available
+  if (process.env.CLAUDE_API_KEY) {
+    set.add('@elizaos/plugin-anthropic');
+  }
   return Array.from(set);
 }
 
@@ -301,7 +305,10 @@ function clamp(value: number, min: number, max: number) {
  * Get default model provider based on available API keys
  */
 function getDefaultModelProvider(): string {
-  // Prefer RedPill if available, otherwise OpenAI
+  // Priority: Claude > RedPill > OpenAI
+  if (process.env.CLAUDE_API_KEY) {
+    return 'claude';
+  }
   if (process.env.REDPILL_API_KEY) {
     return 'redpill';
   }
@@ -319,6 +326,8 @@ function getModelForProvider(provider?: string): string {
   const actualProvider = provider || getDefaultModelProvider();
 
   switch (actualProvider.toLowerCase()) {
+    case 'claude':
+      return process.env.CLAUDE_MODEL || 'claude-3-5-sonnet-20241022';
     case 'redpill':
       return process.env.REDPILL_MODEL || 'gpt-4-turbo';
     case 'openai':
@@ -334,6 +343,11 @@ function getSecretsForProvider(provider?: string): Record<string, string | undef
   const actualProvider = provider || getDefaultModelProvider();
 
   switch (actualProvider.toLowerCase()) {
+    case 'claude':
+      return {
+        ANTHROPIC_API_KEY: process.env.CLAUDE_API_KEY,
+        CLAUDE_API_KEY: process.env.CLAUDE_API_KEY,
+      };
     case 'redpill':
       return {
         OPENAI_API_KEY: process.env.REDPILL_API_KEY, // RedPill uses OpenAI-compatible API

@@ -77,7 +77,7 @@ export interface AgentCharacter {
         minIntervalMs?: number;
       };
       temperatureDelta?: number;
-      modelProvider?: 'openai' | 'redpill';
+      modelProvider?: 'openai' | 'redpill' | 'claude';
     };
   };
 }

@@ -78,6 +78,7 @@ const createAgentSchema = z.object({
     })
     .optional(),
   temperatureDelta: z.number().min(-0.2).max(0.2).optional(),
+  modelProvider: z.enum(['openai', 'redpill', 'claude']).optional(),
 });
 
 const updateAgentSchema = z.object({
@@ -188,6 +189,13 @@ function sanitizeCharacterConfig(input: Record<string, any>) {
 
   if (typeof (input as any).temperatureDelta === 'number') {
     sanitized.temperatureDelta = (input as any).temperatureDelta;
+  }
+
+  if (typeof (input as any).modelProvider === 'string') {
+    const validProviders = ['openai', 'redpill', 'claude'];
+    if (validProviders.includes((input as any).modelProvider)) {
+      sanitized.modelProvider = (input as any).modelProvider;
+    }
   }
 
   return sanitized;
