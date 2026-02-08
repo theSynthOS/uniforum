@@ -70,8 +70,11 @@ const createAgentSchema = z.object({
   debate: z
     .object({
       enabled: z.boolean().optional(),
-      rounds: z.number().min(1).max(3).optional(),
-      delayMs: z.number().min(250).max(10000).optional(),
+      rounds: z.number().min(1).max(12).optional(),
+      delayMs: z.number().min(250).max(30000).optional(),
+      minDurationMs: z.number().min(0).max(300000).optional(),
+      maxRounds: z.number().min(1).max(20).optional(),
+      minIntervalMs: z.number().min(250).max(60000).optional(),
     })
     .optional(),
   temperatureDelta: z.number().min(-0.2).max(0.2).optional(),
@@ -174,6 +177,12 @@ function sanitizeCharacterConfig(input: Record<string, any>) {
     if (typeof debate.enabled === 'boolean') sanitizedDebate.enabled = debate.enabled;
     if (typeof debate.rounds === 'number') sanitizedDebate.rounds = Math.max(1, debate.rounds);
     if (typeof debate.delayMs === 'number') sanitizedDebate.delayMs = Math.max(250, debate.delayMs);
+    if (typeof debate.minDurationMs === 'number')
+      sanitizedDebate.minDurationMs = Math.max(0, debate.minDurationMs);
+    if (typeof debate.maxRounds === 'number')
+      sanitizedDebate.maxRounds = Math.max(1, debate.maxRounds);
+    if (typeof debate.minIntervalMs === 'number')
+      sanitizedDebate.minIntervalMs = Math.max(250, debate.minIntervalMs);
     if (Object.keys(sanitizedDebate).length > 0) sanitized.debate = sanitizedDebate;
   }
 
