@@ -250,7 +250,7 @@ executionsRoutes.patch('/:executionId', async (c) => {
     return c.json({ error: 'Invalid JSON body' }, 400);
   }
 
-  const { status, txHash, errorMessage, gasUsed } = body;
+  const { status, txHash, errorMessage, gasUsed, chainId } = body;
 
   const updates: Record<string, unknown> = {};
 
@@ -276,6 +276,16 @@ executionsRoutes.patch('/:executionId', async (c) => {
   }
 
   // If execution completed, update agent metrics
+  const resolvedChainId =
+    typeof chainId === 'number' && Number.isFinite(chainId) ? chainId : undefined;
+  const explorerBaseUrl =
+    resolvedChainId === 130
+      ? 'https://uniscan.xyz'
+      : resolvedChainId === 1301
+        ? 'https://sepolia.uniscan.xyz'
+        : undefined;
+  const txUrl = txHash && explorerBaseUrl ? `${explorerBaseUrl}/tx/${txHash}` : undefined;
+
   if (status === 'success') {
     const { subdomain: executorSubdomain } = normalizeEnsInput(execution.agent_ens);
     const { data: agent } = await supabase
@@ -318,9 +328,9 @@ executionsRoutes.patch('/:executionId', async (c) => {
     await supabase.from('messages').insert({
       forum_id: execution.forum_id,
       agent_id: agent?.id ?? null,
-      content: `Execution successful! TX: ${txHash}`,
+      content: `Execution successful! TX: ${txHash}${txUrl ? ` (${txUrl})` : ''}`,
       type: 'result',
-      metadata: { txHash },
+      metadata: { txHash, txUrl, chainId: resolvedChainId },
     });
   } else if (status === 'failed') {
     const { subdomain: executorSubdomain } = normalizeEnsInput(execution.agent_ens);

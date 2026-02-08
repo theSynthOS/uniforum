@@ -52,6 +52,11 @@ export function createAgentCharacter(config: AgentConfig): AgentCharacter {
       `Speak in a ${strategyTone} tone. Avoid generic advice.`,
       `When discussing trades or proposals, be concrete with numbers and parameters.`,
       `Do not claim to execute trades; propose or vote based on the forum context.`,
+      `Always try to search the current sentiment and data from X (Twitter) before making decisions.`,
+      `CRITICAL: NEVER say "I'll gather data", "I'll analyze", "Let me fetch", or similar meta-commentary.`,
+      `CRITICAL: ALWAYS provide specific numbers, strategies, and reasoning in EVERY response.`,
+      `CRITICAL: If you don't have real-time data, use your knowledge and expertise to suggest concrete actions with specific parameters.`,
+      `CRITICAL: Always consider the pool manager address when discussing pool configurations.`,
     ]
       .filter(Boolean)
       .join(' '),
@@ -62,12 +67,19 @@ export function createAgentCharacter(config: AgentConfig): AgentCharacter {
         `Stay concise (2-3 sentences) unless asked for details.`,
         `Be specific and quantify risk when possible.`,
         `Reference preferred pools when relevant.`,
+        `NEVER use phrases like "I'll analyze", "Let me check", "Gathering data", or "I'll assess".`,
+        `ALWAYS state your position immediately with concrete numbers and reasoning.`,
       ],
       chat: [
         `Ground opinions in LP experience and risk settings.`,
         `Acknowledge uncertainty rather than overconfident claims.`,
+        `Provide actionable strategies with specific parameters (e.g., "Set range 2800-3200 USDC with 0.3% fee tier").`,
+        `Challenge other agents' proposals if you disagree - explain WHY with data or reasoning.`,
       ],
-      post: [`Write as a distinct LP persona, not a generic assistant.`],
+      post: [
+        `Write as a distinct LP persona, not a generic assistant.`,
+        `Lead with your concrete recommendation, then explain.`,
+      ],
     },
 
     // Knowledge base
@@ -84,12 +96,10 @@ export function createAgentCharacter(config: AgentConfig): AgentCharacter {
 
     // Model configuration
     settings: {
-      model: 'gpt-4-turbo',
+      model: getModelForProvider(heuristics.modelProvider),
       temperature: clamp(temperature, 0.1, 1.2),
       maxTokens: 512,
-      secrets: {
-        OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-      },
+      secrets: getSecretsForProvider(heuristics.modelProvider),
     },
 
     // Plugins to load
@@ -115,9 +125,7 @@ export function createAgentCharacter(config: AgentConfig): AgentCharacter {
     },
 
     // Secrets are provided at runtime via environment variables
-    secrets: {
-      OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-    },
+    secrets: getSecretsForProvider(heuristics.modelProvider),
   };
 }
 
@@ -194,8 +202,14 @@ function buildDefaultPlugins(plugins?: string[]): string[] {
   } else {
     set.add('@elizaos/plugin-sql');
   }
-  if (process.env.OPENAI_API_KEY) {
+  // Add OpenAI plugin if either OpenAI or RedPill API key is available
+  // (RedPill uses OpenAI-compatible API)
+  if (process.env.OPENAI_API_KEY || process.env.REDPILL_API_KEY) {
     set.add('@elizaos/plugin-openai');
+  }
+  // Add Anthropic plugin if Claude API key is available
+  if (process.env.CLAUDE_API_KEY) {
+    set.add('@elizaos/plugin-anthropic');
   }
   return Array.from(set);
 }
@@ -220,12 +234,17 @@ function extractAgentHeuristics(config: AgentConfig) {
   const debate =
     (fromUpload as any).debate && typeof (fromUpload as any).debate === 'object'
       ? (fromUpload as any).debate
-      : { enabled: true, rounds: 2, delayMs: 1200 };
+      : { enabled: true, rounds: 10, delayMs: 1200 };
 
   const temperatureDelta =
     typeof (fromUpload as any).temperatureDelta === 'number'
       ? (fromUpload as any).temperatureDelta
       : undefined;
+
+  const modelProvider =
+    typeof (fromUpload as any).modelProvider === 'string'
+      ? (fromUpload as any).modelProvider
+      : getDefaultModelProvider();
 
   return {
     rulesOfThumb,
@@ -233,6 +252,7 @@ function extractAgentHeuristics(config: AgentConfig) {
     objectiveWeights,
     debate,
     temperatureDelta,
+    modelProvider,
   };
 }
 
@@ -292,6 +312,67 @@ function deriveTemperatureDelta(seed: string, maxDelta: number = 0.1): number {
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
+
+/**
+ * Get default model provider based on available API keys
+ */
+function getDefaultModelProvider(): string {
+  // Priority: Claude > RedPill > OpenAI
+  if (process.env.CLAUDE_API_KEY) {
+    return 'claude';
+  }
+  if (process.env.REDPILL_API_KEY) {
+    return 'redpill';
+  }
+  if (process.env.OPENAI_API_KEY) {
+    return 'openai';
+  }
+  // Default to openai even if no key (will warn later)
+  return 'openai';
+}
+
+/**
+ * Get model name based on provider
+ */
+function getModelForProvider(provider?: string): string {
+  const actualProvider = provider || getDefaultModelProvider();
+
+  switch (actualProvider.toLowerCase()) {
+    case 'claude':
+      return process.env.CLAUDE_MODEL || 'claude-3-5-sonnet-20241022';
+    case 'redpill':
+      return process.env.REDPILL_MODEL || 'gpt-4-turbo';
+    case 'openai':
+    default:
+      return process.env.OPENAI_MODEL || 'gpt-4-turbo';
+  }
+}
+
+/**
+ * Get secrets (API keys) based on provider
+ */
+function getSecretsForProvider(provider?: string): Record<string, string | undefined> {
+  const actualProvider = provider || getDefaultModelProvider();
+
+  switch (actualProvider.toLowerCase()) {
+    case 'claude':
+      return {
+        ANTHROPIC_API_KEY: process.env.CLAUDE_API_KEY,
+        CLAUDE_API_KEY: process.env.CLAUDE_API_KEY,
+      };
+    case 'redpill':
+      return {
+        OPENAI_API_KEY: process.env.REDPILL_API_KEY, // RedPill uses OpenAI-compatible API
+        REDPILL_API_KEY: process.env.REDPILL_API_KEY,
+      };
+    case 'openai':
+    default:
+      return {
+        OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+      };
+  }
+}
+
 function normalizeKnowledge(
   knowledge?: AgentCharacter['knowledge']
 ): AgentCharacter['knowledge'] | undefined {

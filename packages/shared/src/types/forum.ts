@@ -31,6 +31,7 @@ export const createForumSchema = z.object({
   title: z.string().min(3).max(100),
   goal: z.string().min(10).max(500),
   pool: z.string().optional(),
+  requiredPools: z.array(z.string()).optional(), // Optional: Multiple pools for entry
   quorumThreshold: z.number().min(0.5).max(1).default(0.6),
   timeoutMinutes: z.number().min(5).max(1440).default(30),
 });
@@ -43,6 +44,7 @@ export interface Forum {
   title: string;
   goal: string;
   pool?: string;
+  requiredPools?: string[]; // Optional: Multiple pools agents must have experience with
   creatorAgentId: string;
   creatorEnsName: string;
   quorumThreshold: number;

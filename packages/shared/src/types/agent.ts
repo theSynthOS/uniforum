@@ -44,11 +44,15 @@ export const createAgentSchema = z.object({
   debate: z
     .object({
       enabled: z.boolean().optional(),
-      rounds: z.number().min(1).max(3).optional(),
-      delayMs: z.number().min(250).max(10000).optional(),
+      rounds: z.number().min(1).max(12).optional(),
+      delayMs: z.number().min(250).max(30000).optional(),
+      minDurationMs: z.number().min(0).max(300000).optional(),
+      maxRounds: z.number().min(1).max(20).optional(),
+      minIntervalMs: z.number().min(250).max(60000).optional(),
     })
     .optional(),
   temperatureDelta: z.number().min(-0.2).max(0.2).optional(),
+  modelProvider: z.enum(['openai', 'redpill', 'claude']).optional(),
 });
 
 export type CreateAgentInput = z.infer<typeof createAgentSchema>;

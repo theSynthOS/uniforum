@@ -45,3 +45,5 @@ artifacts/
 .eliza/
 
 cache/
+
+.eliza-data/
