@@ -72,8 +72,12 @@ export interface AgentCharacter {
         enabled?: boolean;
         rounds?: number;
         delayMs?: number;
+        minDurationMs?: number;
+        maxRounds?: number;
+        minIntervalMs?: number;
       };
       temperatureDelta?: number;
+      modelProvider?: 'openai' | 'redpill';
     };
   };
 }

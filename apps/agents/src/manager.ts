@@ -30,13 +30,71 @@ export class AgentManager {
   private eliza: ElizaOS;
   private agentsStarted = false;
   private executingProposals: Set<string> = new Set();
-  private debateState: Map<string, { lastMessageId: string; roundsUsed: number; lastAt: number }> =
-    new Map();
+  private debateState: Map<
+    string,
+    {
+      rootMessageId: string;
+      roundsUsed: number;
+      lastAt: number;
+      firstAt: number;
+      active: boolean;
+    }
+  > = new Map();
   private proposalCooldown: Map<string, number> = new Map();
 
   constructor(supabase: SupabaseClient<Database>) {
     this.supabase = supabase;
     this.eliza = new ElizaOS();
+  }
+
+  private readIntEnv(name: string, fallback: number): number {
+    const raw = process.env[name];
+    if (!raw) return fallback;
+    const parsed = parseInt(raw, 10);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  private getDebateTiming(debateConfig?: {
+    enabled?: boolean;
+    rounds?: number;
+    delayMs?: number;
+    minDurationMs?: number;
+    maxRounds?: number;
+    minIntervalMs?: number;
+  }): { maxRounds: number; delayMs: number; minIntervalMs: number } {
+    const configuredDelay = typeof debateConfig?.delayMs === 'number' ? debateConfig.delayMs : 1200;
+    const configuredRounds =
+      typeof debateConfig?.rounds === 'number' ? debateConfig.rounds : 2;
+
+    const defaultMinDuration = this.readIntEnv('DEBATE_MIN_DURATION_MS', 60_000);
+    const defaultMaxRounds = this.readIntEnv('DEBATE_MAX_ROUNDS', 12);
+
+    const minDurationMs =
+      typeof debateConfig?.minDurationMs === 'number'
+        ? debateConfig.minDurationMs
+        : defaultMinDuration;
+    const hardMaxRounds =
+      typeof debateConfig?.maxRounds === 'number' ? debateConfig.maxRounds : defaultMaxRounds;
+
+    const safeMaxRounds = Math.max(1, hardMaxRounds);
+    const enforceDuration = minDurationMs > 0;
+    const minDelayForDuration = enforceDuration
+      ? Math.ceil(minDurationMs / safeMaxRounds)
+      : 0;
+
+    const delayMs = Math.max(configuredDelay, minDelayForDuration, 250);
+    const minRounds = enforceDuration ? Math.max(1, Math.ceil(minDurationMs / delayMs)) : 1;
+    const maxRounds = Math.min(Math.max(configuredRounds, minRounds), safeMaxRounds);
+
+    const configuredMinInterval =
+      typeof debateConfig?.minIntervalMs === 'number'
+        ? debateConfig.minIntervalMs
+        : this.readIntEnv('DEBATE_MIN_INTERVAL_MS', 0);
+    const derivedMinInterval = Math.max(5000, Math.min(30_000, delayMs));
+    const minIntervalMs =
+      configuredMinInterval > 0 ? configuredMinInterval : derivedMinInterval;
+
+    return { maxRounds, delayMs, minIntervalMs };
   }
 
   private extractResponseText(
@@ -150,9 +208,9 @@ export class AgentManager {
     const resolvedPlugins = disableNodePlugin
       ? pluginList.filter((plugin) => plugin !== '@elizaos/plugin-node')
       : pluginList;
-    if (!process.env.OPENAI_API_KEY) {
+    if (!process.env.OPENAI_API_KEY && !process.env.REDPILL_API_KEY) {
       console.warn(
-        `[agents] OPENAI_API_KEY is not set. Agent ${ensName} will not be able to generate responses.`
+        `[agents] No AI provider API key set (OPENAI_API_KEY or REDPILL_API_KEY). Agent ${ensName} will not be able to generate responses.`
       );
     }
 
@@ -416,7 +474,10 @@ export class AgentManager {
     const recentMessages = await this.fetchRecentMessages(message.forum_id);
     const agentContext = this.buildAgentDiscussionContext(agent);
 
-    const participation = shouldParticipate(agentContext, forum, recentMessages);
+    const debateTiming = this.getDebateTiming(agentContext.debate);
+    const participation = shouldParticipate(agentContext, forum, recentMessages, {
+      minIntervalMs: agentContext.debate?.enabled ? debateTiming.minIntervalMs : undefined,
+    });
     if (!participation.should) {
       console.log(`[agents] ${agent.ensName} skipped discussion: ${participation.reason}`);
       return;
@@ -457,14 +518,11 @@ export class AgentManager {
 
     await this.maybeAutoPropose(agent, forum, agentContext, recentMessages, poolSnapshot);
 
-    await this.handleDebateFollowUp(
-      agent,
-      message,
-      forum,
-      agentContext,
-      recentMessages,
-      poolSnapshot
-    );
+    void this
+      .handleDebateFollowUp(agent, message, forum, agentContext, recentMessages, poolSnapshot)
+      .catch((error) => {
+        console.error('[agents] Debate follow-up error:', error);
+      });
   }
 
   private async handleForumProposal(agent: AgentInstance, proposal: any): Promise<void> {
@@ -553,64 +611,91 @@ export class AgentManager {
     const debateConfig = agentContext.debate;
     if (!debateConfig?.enabled) return;
 
-    const maxRounds = Math.min(Math.max(debateConfig.rounds ?? 2, 1), 3);
-    const delayMs = Math.max(debateConfig.delayMs ?? 1200, 250);
+    const { maxRounds, delayMs } = this.getDebateTiming(debateConfig);
 
     const key = `${agent.id}:${forum.id}`;
-    const state = this.debateState.get(key);
+    const existing = this.debateState.get(key);
     const now = Date.now();
 
-    if (state && state.lastMessageId === message.id && state.roundsUsed >= maxRounds) {
+    if (existing?.active && existing.rootMessageId !== message.id) {
       return;
     }
 
-    if (state && now - state.lastAt < delayMs) {
-      return;
-    }
-
-    const nextRoundsUsed = state?.lastMessageId === message.id ? state.roundsUsed + 1 : 1;
-    if (nextRoundsUsed > maxRounds) return;
+    const rootMessageId = existing?.active ? existing.rootMessageId : message.id;
+    let roundsUsed = existing?.active ? existing.roundsUsed : 0;
+    const firstAt = existing?.active ? existing.firstAt : now;
 
     this.debateState.set(key, {
-      lastMessageId: message.id,
-      roundsUsed: nextRoundsUsed,
-      lastAt: now,
+      rootMessageId,
+      roundsUsed,
+      lastAt: existing?.lastAt ?? now,
+      firstAt,
+      active: true,
     });
 
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    while (roundsUsed < maxRounds) {
+      const state = this.debateState.get(key);
+      if (!state?.active) break;
 
-    const debatePrompt = buildDebatePrompt(agentContext, {
-      forum,
-      recentMessages,
-      poolSnapshot,
-    });
+      const elapsedSinceLast = Date.now() - state.lastAt;
+      const waitMs = Math.max(0, delayMs - elapsedSinceLast);
+      if (waitMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+      }
 
-    const response = await this.eliza.handleMessage(agent.agentId!, {
-      entityId: message.agent_id || message.id,
-      roomId: message.forum_id,
-      content: {
-        text: debatePrompt,
-        source: 'uniforum',
-      },
-    });
+      roundsUsed += 1;
+      this.debateState.set(key, {
+        rootMessageId,
+        roundsUsed,
+        lastAt: Date.now(),
+        firstAt,
+        active: true,
+      });
 
-    const text = this.extractResponseText(response);
-    if (!text) return;
+      const latestMessages = await this.fetchRecentMessages(forum.id);
+      const latestPoolSnapshot = await getPoolSnapshot(forum.pool);
 
-    const saved = await this.insertForumMessage({
-      forum_id: message.forum_id,
-      agent_id: agent.id,
-      content: text,
-      type: 'discussion',
-      metadata: {
-        referencedMessages: [message.id],
-        debateRound: nextRoundsUsed,
-      },
-    });
+      const debatePrompt = buildDebatePrompt(agentContext, {
+        forum,
+        recentMessages: latestMessages.length ? latestMessages : recentMessages,
+        poolSnapshot: latestPoolSnapshot ?? poolSnapshot,
+      });
 
-    if (saved) {
-      console.log(`[agents] ${agent.ensName} posted a debate follow-up`);
+      const response = await this.eliza.handleMessage(agent.agentId!, {
+        entityId: message.agent_id || message.id,
+        roomId: message.forum_id,
+        content: {
+          text: debatePrompt,
+          source: 'uniforum',
+        },
+      });
+
+      const text = this.extractResponseText(response);
+      if (!text) continue;
+
+      const saved = await this.insertForumMessage({
+        forum_id: message.forum_id,
+        agent_id: agent.id,
+        content: text,
+        type: 'discussion',
+        metadata: {
+          referencedMessages: [rootMessageId],
+          debateRound: roundsUsed,
+        },
+      });
+
+      if (saved) {
+        console.log(`[agents] ${agent.ensName} posted a debate follow-up`);
+      }
     }
+
+    this.debateState.set(key, {
+      rootMessageId,
+      roundsUsed,
+      lastAt: Date.now(),
+      firstAt,
+      active: false,
+    });
   }
 
   private async maybeAutoPropose(

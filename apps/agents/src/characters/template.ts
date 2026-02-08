@@ -84,12 +84,10 @@ export function createAgentCharacter(config: AgentConfig): AgentCharacter {
 
     // Model configuration
     settings: {
-      model: 'gpt-4-turbo',
+      model: getModelForProvider(heuristics.modelProvider),
       temperature: clamp(temperature, 0.1, 1.2),
       maxTokens: 512,
-      secrets: {
-        OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-      },
+      secrets: getSecretsForProvider(heuristics.modelProvider),
     },
 
     // Plugins to load
@@ -115,9 +113,7 @@ export function createAgentCharacter(config: AgentConfig): AgentCharacter {
     },
 
     // Secrets are provided at runtime via environment variables
-    secrets: {
-      OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-    },
+    secrets: getSecretsForProvider(heuristics.modelProvider),
   };
 }
 
@@ -194,7 +190,9 @@ function buildDefaultPlugins(plugins?: string[]): string[] {
   } else {
     set.add('@elizaos/plugin-sql');
   }
-  if (process.env.OPENAI_API_KEY) {
+  // Add OpenAI plugin if either OpenAI or RedPill API key is available
+  // (RedPill uses OpenAI-compatible API)
+  if (process.env.OPENAI_API_KEY || process.env.REDPILL_API_KEY) {
     set.add('@elizaos/plugin-openai');
   }
   return Array.from(set);
@@ -227,12 +225,18 @@ function extractAgentHeuristics(config: AgentConfig) {
       ? (fromUpload as any).temperatureDelta
       : undefined;
 
+  const modelProvider =
+    typeof (fromUpload as any).modelProvider === 'string'
+      ? (fromUpload as any).modelProvider
+      : getDefaultModelProvider();
+
   return {
     rulesOfThumb,
     constraints,
     objectiveWeights,
     debate,
     temperatureDelta,
+    modelProvider,
   };
 }
 
@@ -292,6 +296,57 @@ function deriveTemperatureDelta(seed: string, maxDelta: number = 0.1): number {
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
+
+/**
+ * Get default model provider based on available API keys
+ */
+function getDefaultModelProvider(): string {
+  // Prefer RedPill if available, otherwise OpenAI
+  if (process.env.REDPILL_API_KEY) {
+    return 'redpill';
+  }
+  if (process.env.OPENAI_API_KEY) {
+    return 'openai';
+  }
+  // Default to openai even if no key (will warn later)
+  return 'openai';
+}
+
+/**
+ * Get model name based on provider
+ */
+function getModelForProvider(provider?: string): string {
+  const actualProvider = provider || getDefaultModelProvider();
+
+  switch (actualProvider.toLowerCase()) {
+    case 'redpill':
+      return process.env.REDPILL_MODEL || 'gpt-4-turbo';
+    case 'openai':
+    default:
+      return process.env.OPENAI_MODEL || 'gpt-4-turbo';
+  }
+}
+
+/**
+ * Get secrets (API keys) based on provider
+ */
+function getSecretsForProvider(provider?: string): Record<string, string | undefined> {
+  const actualProvider = provider || getDefaultModelProvider();
+
+  switch (actualProvider.toLowerCase()) {
+    case 'redpill':
+      return {
+        OPENAI_API_KEY: process.env.REDPILL_API_KEY, // RedPill uses OpenAI-compatible API
+        REDPILL_API_KEY: process.env.REDPILL_API_KEY,
+      };
+    case 'openai':
+    default:
+      return {
+        OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+      };
+  }
+}
+
 function normalizeKnowledge(
   knowledge?: AgentCharacter['knowledge']
 ): AgentCharacter['knowledge'] | undefined {
