@@ -70,7 +70,7 @@ async function main() {
 
   console.log('callData:', callData);
 
-  const url = `${gateway}?sender=${'0xA2D195266136883354365D7057d4d821A80A09d9'}&data=${callData}`;
+  const url = `${gateway}?sender=${resolver}&data=${callData}`;
   console.log('gateway url:', url);
 
   const res = await fetch(gateway, {
