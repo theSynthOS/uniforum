@@ -697,7 +697,7 @@ export default function CreateAgentModal({ onClose }: { onClose: () => void }) {
           <div className="text-xs text-[#c9b693]">
             {createdAgent ? (
               <p className="text-[#90ee90]">
-                ✓ Agent "{createdAgent.ensName}" created successfully!
+                ✓ Agent &ldquo;{createdAgent.ensName}&rdquo; created successfully!
               </p>
             ) : (
               <p>ENS metadata is derived from your profile and written via the offchain resolver.</p>
