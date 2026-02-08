@@ -34,8 +34,8 @@ const DECISION_DNA_PRESETS = {
     },
     temperatureDelta: -0.05,
   },
-  balanced: {
-    label: 'Balanced',
+  moderate: {
+    label: 'Moderate',
     rulesOfThumb: [
       'Reject swaps if slippage > 80 bps unless volatility is rising',
       'Balance tight ranges with fee capture on stable pairs',
@@ -389,7 +389,10 @@ export default function CreateAgentModal({ onClose }: { onClose: () => void }) {
                       <button
                         key={option}
                         type="button"
-                        onClick={() => setStrategy(option)}
+                        onClick={() => {
+                          setStrategy(option);
+                          applyPreset(option);
+                        }}
                         className={`border-2 px-3 py-2 text-[9px] uppercase tracking-[0.2em] sm:text-[10px] ${
                           strategy === option
                             ? 'border-[#ffd966] bg-[#3a2b1f] text-[#ffd966]'
@@ -486,20 +489,8 @@ export default function CreateAgentModal({ onClose }: { onClose: () => void }) {
               <p className="mb-3 text-xs uppercase tracking-[0.3em] text-[#ffd966]">
                 Decision DNA (Required)
               </p>
-              <div className="mb-4 flex flex-wrap items-center gap-2">
-                {Object.entries(DECISION_DNA_PRESETS).map(([key, preset]) => (
-                  <Button
-                    key={key}
-                    size="small"
-                    variant="ghost"
-                    onClick={() => applyPreset(key as keyof typeof DECISION_DNA_PRESETS)}
-                  >
-                    {preset.label}
-                  </Button>
-                ))}
-              </div>
               <p className="mb-4 text-xs text-[#c9b693]">
-                Presets fill rules of thumb, constraints, objective weights, and debate settings.
+                Automatically synced with your selected strategy above.
               </p>
               <div className="grid gap-4">
                 <label className="grid gap-2 text-sm">
@@ -716,26 +707,62 @@ export default function CreateAgentModal({ onClose }: { onClose: () => void }) {
 
         <div className="flex flex-col gap-4 border-t-4 border-[#3a2b1f] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <div className="text-xs text-[#c9b693]">
-            <p>ENS metadata is derived from your profile and written via the offchain resolver.</p>
+            {createdAgent ? (
+              <p className="text-[#90ee90]">
+                ✓ Agent "{createdAgent.ensName}" created successfully!
+              </p>
+            ) : (
+              <p>ENS metadata is derived from your profile and written via the offchain resolver.</p>
+            )}
             {error ? <p className="mt-2 text-[#ff9a7a]">{error}</p> : null}
           </div>
           <div className="flex flex-col gap-3 sm:flex-row">
-            <Button
-              variant="ghost"
-              size="small"
-              onClick={onClose}
-              className="w-full sm:w-auto"
-            >
-              Cancel
-            </Button>
-            <Button
-              size="small"
-              onClick={handleCreate}
-              disabled={!canSubmit}
-              className="w-full sm:w-auto"
-            >
-              {authenticated ? (isSubmitting ? 'Creating...' : 'Create Agent') : 'Connect Wallet'}
-            </Button>
+            {createdAgent ? (
+              <>
+                <Button
+                  variant="ghost"
+                  size="small"
+                  onClick={onClose}
+                  className="w-full sm:w-auto"
+                >
+                  Close
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="small"
+                  onClick={() => (window.location.href = '/forum')}
+                  className="w-full sm:w-auto"
+                >
+                  Visit Forum
+                </Button>
+                <Button
+                  size="small"
+                  onClick={() => (window.location.href = '/playground')}
+                  className="w-full sm:w-auto"
+                >
+                  Go to Playground →
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  variant="ghost"
+                  size="small"
+                  onClick={onClose}
+                  className="w-full sm:w-auto"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="small"
+                  onClick={handleCreate}
+                  disabled={!canSubmit}
+                  className="w-full sm:w-auto"
+                >
+                  {authenticated ? (isSubmitting ? 'Creating...' : 'Create Agent') : 'Connect Wallet'}
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </div>
