@@ -40,3 +40,6 @@ pnpm-debug.log*
 # Misc
 .vercel
 .netlify
+
+artifacts/
+.eliza/

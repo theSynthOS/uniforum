@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getSupabase } from '../lib/supabase';
+import { mapAgentIdsToEns } from '../lib/agents';
 import { ENS_CONFIG } from '@uniforum/shared';
 import { buildEnsTextRecords, encryptPrivateKey } from '@uniforum/contracts';
 import { AGENT_PLUGIN_ALLOWLIST } from '@uniforum/shared/constants';
@@ -29,6 +30,25 @@ function normalizeEnsInput(input: string) {
   };
 }
 
+function normalizeAgentMetrics(metrics?: Record<string, any>) {
+  if (!metrics) return undefined;
+
+  const successful = Number(metrics.successful_executions ?? 0);
+  const failed = Number(metrics.failed_executions ?? 0);
+  const executionsPerformed = Number(metrics.executions_performed ?? successful + failed);
+  const votesCast = Number(metrics.votes_cast ?? metrics.votes_participated ?? 0);
+
+  return {
+    forumsParticipated: Number(metrics.forums_participated ?? 0),
+    proposalsMade: Number(metrics.proposals_made ?? 0),
+    votesCast,
+    executionsPerformed,
+    totalVolumeTraded: metrics.total_volume_traded ?? undefined,
+    successRate:
+      metrics.success_rate ?? (executionsPerformed > 0 ? successful / executionsPerformed : 0),
+  };
+}
+
 // Validation schemas
 const createAgentSchema = z.object({
   name: z
@@ -40,6 +60,21 @@ const createAgentSchema = z.object({
   riskTolerance: z.number().min(0).max(1),
   preferredPools: z.array(z.string()).min(1),
   expertiseContext: z.string().max(2000).optional(),
+  rulesOfThumb: z.array(z.string().min(3)).min(1),
+  constraints: z.record(z.any()).refine((value) => Object.keys(value).length > 0, {
+    message: 'constraints must include at least one field',
+  }),
+  objectiveWeights: z.record(z.number()).refine((value) => Object.keys(value).length > 0, {
+    message: 'objectiveWeights must include at least one field',
+  }),
+  debate: z
+    .object({
+      enabled: z.boolean().optional(),
+      rounds: z.number().min(1).max(3).optional(),
+      delayMs: z.number().min(250).max(10000).optional(),
+    })
+    .optional(),
+  temperatureDelta: z.number().min(-0.2).max(0.2).optional(),
 });
 
 const updateAgentSchema = z.object({
@@ -202,8 +237,10 @@ agentsRoutes.get('/', optionalAuthMiddleware, async (c) => {
       agent_metrics (
         forums_participated,
         proposals_made,
-        votes_cast,
-        executions_performed
+        votes_participated,
+        successful_executions,
+        failed_executions,
+        total_volume_traded
       )
     `
     )
@@ -240,7 +277,7 @@ agentsRoutes.get('/', optionalAuthMiddleware, async (c) => {
       preferredPools: agent.preferred_pools,
       status: agent.status,
       createdAt: agent.created_at,
-      metrics: agent.agent_metrics?.[0],
+      metrics: normalizeAgentMetrics(agent.agent_metrics?.[0]),
     })) || [];
 
   return c.json({
@@ -277,7 +314,18 @@ agentsRoutes.post('/', authMiddleware, async (c) => {
     );
   }
 
-  const { name, strategy, riskTolerance, preferredPools, expertiseContext } = parsed.data;
+  const {
+    name,
+    strategy,
+    riskTolerance,
+    preferredPools,
+    expertiseContext,
+    rulesOfThumb,
+    constraints,
+    objectiveWeights,
+    debate,
+    temperatureDelta,
+  } = parsed.data;
   const { subdomain, full: fullEnsName } = normalizeEnsInput(name);
 
   // Check if agent name already exists
@@ -292,6 +340,14 @@ agentsRoutes.post('/', authMiddleware, async (c) => {
   }
 
   const { address: agentWalletAddress, encryptedPrivateKey } = createEncryptedAgentWallet();
+  const characterConfig = sanitizeCharacterConfig({
+    rulesOfThumb,
+    constraints,
+    objectiveWeights,
+    debate,
+    temperatureDelta,
+  });
+  const sanitizedPlugins = normalizePlugins(undefined);
 
   // Insert agent
   const { data: agent, error: insertError } = await supabase
@@ -305,6 +361,8 @@ agentsRoutes.post('/', authMiddleware, async (c) => {
       expertise_context: expertiseContext || '',
       status: 'active',
       config_source: 'template',
+      character_config: characterConfig,
+      character_plugins: sanitizedPlugins,
     })
     .select()
     .single();
@@ -333,6 +391,8 @@ agentsRoutes.post('/', authMiddleware, async (c) => {
     expertiseContext: agent.expertise_context || '',
     agentWallet: agentWalletAddress,
     createdAt: new Date(agent.created_at),
+    characterConfig,
+    characterPlugins: sanitizedPlugins,
   });
 
   return c.json(
@@ -385,8 +445,20 @@ agentsRoutes.post('/upload', authMiddleware, async (c) => {
     );
   }
 
-  const { name, strategy, riskTolerance, preferredPools, expertiseContext, characterConfig, plugins } =
-    parsed.data;
+  const {
+    name,
+    strategy,
+    riskTolerance,
+    preferredPools,
+    expertiseContext,
+    characterConfig,
+    plugins,
+    rulesOfThumb,
+    constraints,
+    objectiveWeights,
+    debate,
+    temperatureDelta,
+  } = parsed.data;
   const { subdomain, full: fullEnsName } = normalizeEnsInput(name);
 
   const { data: existing } = await supabase
@@ -399,7 +471,24 @@ agentsRoutes.post('/upload', authMiddleware, async (c) => {
     return c.json({ error: 'Agent name already taken' }, 409);
   }
 
-  const sanitizedConfig = sanitizeCharacterConfig(characterConfig);
+  const sanitizedConfig = sanitizeCharacterConfig({
+    ...characterConfig,
+    rulesOfThumb,
+    constraints,
+    objectiveWeights,
+    debate,
+    temperatureDelta,
+  });
+  if (
+    !sanitizedConfig.rulesOfThumb ||
+    !sanitizedConfig.constraints ||
+    !sanitizedConfig.objectiveWeights
+  ) {
+    return c.json(
+      { error: 'characterConfig must include rulesOfThumb, constraints, and objectiveWeights' },
+      400
+    );
+  }
   const sanitizedPlugins = normalizePlugins(plugins);
 
   const serialized = JSON.stringify(sanitizedConfig);
@@ -448,6 +537,8 @@ agentsRoutes.post('/upload', authMiddleware, async (c) => {
     expertiseContext: agent.expertise_context || '',
     agentWallet: agentWalletAddress,
     createdAt: new Date(agent.created_at),
+    characterConfig: sanitizedConfig,
+    characterPlugins: sanitizedPlugins,
   });
 
   return c.json(
@@ -484,7 +575,7 @@ agentsRoutes.get('/:ensName', optionalAuthMiddleware, async (c) => {
   const ensName = c.req.param('ensName');
   const supabase = getSupabase();
 
-  const { subdomain, full: fullEnsName } = normalizeEnsInput(ensName);
+  const { subdomain } = normalizeEnsInput(ensName);
 
   const { data: agent, error } = await supabase
     .from('agents')
@@ -514,7 +605,7 @@ agentsRoutes.get('/:ensName', optionalAuthMiddleware, async (c) => {
     status: agent.status,
     createdAt: agent.created_at,
     updatedAt: agent.updated_at,
-    metrics: agent.agent_metrics?.[0],
+    metrics: normalizeAgentMetrics(agent.agent_metrics?.[0]),
     wallet: agent.agent_wallets?.[0],
   });
 });
@@ -646,13 +737,17 @@ agentsRoutes.get('/:ensName/metrics', async (c) => {
     return c.json({ error: 'Metrics not found' }, 404);
   }
 
+  const normalizedMetrics = normalizeAgentMetrics(metrics);
+
   return c.json({
-    forumsParticipated: metrics.forums_participated,
-    proposalsMade: metrics.proposals_made,
-    votesCast: metrics.votes_cast,
-    executionsPerformed: metrics.executions_performed,
-    totalVolumeTraded: metrics.total_volume_traded,
-    successRate: metrics.success_rate,
+    ...(normalizedMetrics ?? {
+      forumsParticipated: 0,
+      proposalsMade: 0,
+      votesCast: 0,
+      executionsPerformed: 0,
+      totalVolumeTraded: '0',
+      successRate: 0,
+    }),
     updatedAt: metrics.updated_at,
   });
 });
@@ -675,10 +770,38 @@ agentsRoutes.get('/:ensName/forums', async (c) => {
   }
 
   // Get forums where this agent is a participant
+  const { data: participantRows, error: participantsError } = await supabase
+    .from('forum_participants')
+    .select('forum_id')
+    .eq('agent_id', agent.id)
+    .eq('is_active', true);
+
+  if (participantsError) {
+    console.error('[agents] Forums error:', participantsError);
+    return c.json({ error: 'Failed to fetch forums' }, 500);
+  }
+
+  const forumIds = (participantRows || []).map((row) => row.forum_id);
+  if (forumIds.length === 0) {
+    return c.json({ forums: [] });
+  }
+
   const { data: forums, error } = await supabase
     .from('forums')
-    .select('*')
-    .contains('participants', [fullEnsName])
+    .select(
+      `
+      id,
+      title,
+      goal,
+      pool,
+      creator_agent_id,
+      quorum_threshold,
+      status,
+      created_at,
+      updated_at
+    `
+    )
+    .in('id', forumIds)
     .order('created_at', { ascending: false });
 
   if (error) {
@@ -686,7 +809,42 @@ agentsRoutes.get('/:ensName/forums', async (c) => {
     return c.json({ error: 'Failed to fetch forums' }, 500);
   }
 
+  const participantsByForum = new Map<string, string[]>();
+  const { data: forumParticipants } = await supabase
+    .from('forum_participants')
+    .select('forum_id, agent_id')
+    .in('forum_id', forumIds)
+    .eq('is_active', true);
+
+  const participantAgentIds = (forumParticipants || []).map((row) => row.agent_id);
+  const ensById = await mapAgentIdsToEns(supabase, participantAgentIds);
+
+  for (const row of forumParticipants || []) {
+    const ens = ensById.get(row.agent_id);
+    if (!ens) continue;
+    const list = participantsByForum.get(row.forum_id) || [];
+    list.push(ens);
+    participantsByForum.set(row.forum_id, list);
+  }
+
+  const creatorEnsById = await mapAgentIdsToEns(
+    supabase,
+    (forums || []).map((forum) => forum.creator_agent_id)
+  );
+
   return c.json({
-    forums: forums || [],
+    forums:
+      forums?.map((forum) => ({
+        id: forum.id,
+        title: forum.title,
+        goal: forum.goal,
+        pool: forum.pool,
+        creatorAgentEns: creatorEnsById.get(forum.creator_agent_id) || '',
+        participants: participantsByForum.get(forum.id) || [],
+        quorumThreshold: forum.quorum_threshold,
+        status: forum.status,
+        createdAt: forum.created_at,
+        updatedAt: forum.updated_at,
+      })) || [],
   });
 });

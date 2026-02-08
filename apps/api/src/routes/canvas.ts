@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { getSupabase } from '../lib/supabase';
+import { formatAgentEns, mapAgentIdsToEns, normalizeEnsInput } from '../lib/agents';
 
 export const canvasRoutes = new Hono();
 
@@ -70,7 +71,9 @@ canvasRoutes.get('/state', async (c) => {
     .from('agents')
     .select(
       `
+      id,
       ens_name,
+      full_ens_name,
       strategy,
       current_forum_id,
       preferred_pools
@@ -90,7 +93,6 @@ canvasRoutes.get('/state', async (c) => {
       `
       id,
       title,
-      participants,
       status
     `
     )
@@ -104,9 +106,28 @@ canvasRoutes.get('/state', async (c) => {
   // Get recent messages for hover previews
   const { data: recentMessages } = await supabase
     .from('messages')
-    .select('agent_ens, content, forum_id, created_at')
+    .select('agent_id, content, forum_id, created_at')
     .order('created_at', { ascending: false })
     .limit(50);
+
+  const forumIds = (forums || []).map((forum) => forum.id);
+  const { data: forumParticipants } = await supabase
+    .from('forum_participants')
+    .select('forum_id, agent_id')
+    .in('forum_id', forumIds)
+    .eq('is_active', true);
+
+  const participantAgentIds = (forumParticipants || []).map((row) => row.agent_id);
+  const participantEnsById = await mapAgentIdsToEns(supabase, participantAgentIds);
+  const participantsByForum = new Map<string, string[]>();
+
+  for (const row of forumParticipants || []) {
+    const ens = participantEnsById.get(row.agent_id);
+    if (!ens) continue;
+    const list = participantsByForum.get(row.forum_id) || [];
+    list.push(ens);
+    participantsByForum.set(row.forum_id, list);
+  }
 
   // Build rooms with forum data
   const rooms: Room[] = ROOM_LAYOUT.map((room) => {
@@ -120,7 +141,7 @@ canvasRoutes.get('/state', async (c) => {
     return {
       ...room,
       forumId: matchingForum?.id || null,
-      agents: matchingForum?.participants || [],
+      agents: matchingForum ? participantsByForum.get(matchingForum.id) || [] : [],
     };
   });
 
@@ -158,7 +179,7 @@ canvasRoutes.get('/state', async (c) => {
     }
 
     // Find last message
-    const lastMsg = recentMessages?.find((m) => m.agent_ens === agent.ens_name);
+    const lastMsg = recentMessages?.find((m) => m.agent_id === agent.id);
 
     // Determine status
     let status: 'idle' | 'speaking' | 'voting' = 'idle';
@@ -171,7 +192,7 @@ canvasRoutes.get('/state', async (c) => {
     }
 
     return {
-      ensName: agent.ens_name,
+      ensName: formatAgentEns(agent),
       position,
       currentRoom,
       status,
@@ -203,14 +224,10 @@ canvasRoutes.get('/room/:roomId', async (c) => {
     .from('forums')
     .select(
       `
-      *,
-      messages:messages(
-        id,
-        agent_ens,
-        content,
-        type,
-        created_at
-      )
+      id,
+      title,
+      goal,
+      status
     `
     )
     .ilike('title', `%${room.name.split(' ')[0]}%`)
@@ -219,21 +236,64 @@ canvasRoutes.get('/room/:roomId', async (c) => {
     .limit(1);
 
   const forum = forums?.[0];
+  const participants =
+    forum && forum.id
+      ? await (async () => {
+          const { data: forumParticipants } = await supabase
+            .from('forum_participants')
+            .select('agent_id')
+            .eq('forum_id', forum.id)
+            .eq('is_active', true);
+
+          const agentIds = (forumParticipants || []).map((row) => row.agent_id);
+          const ensById = await mapAgentIdsToEns(supabase, agentIds);
+          return (forumParticipants || [])
+            .map((row) => ensById.get(row.agent_id))
+            .filter((ens): ens is string => Boolean(ens));
+        })()
+      : [];
+
+  const recentMessages =
+    forum && forum.id
+      ? await (async () => {
+          const { data: messages } = await supabase
+            .from('messages')
+            .select('id, agent_id, content, type, created_at')
+            .eq('forum_id', forum.id)
+            .order('created_at', { ascending: false })
+            .limit(10);
+
+          const agentIds = (messages || [])
+            .map((message) => message.agent_id)
+            .filter((id): id is string => Boolean(id));
+          const ensById = await mapAgentIdsToEns(supabase, agentIds);
+
+          return (
+            messages?.map((message) => ({
+              id: message.id,
+              agentEns: message.agent_id ? ensById.get(message.agent_id) || '' : 'system',
+              content: message.content,
+              type: message.type,
+              createdAt: message.created_at,
+            })) || []
+          );
+        })()
+      : [];
 
   return c.json({
     room: {
       ...room,
       forumId: forum?.id || null,
-      agents: forum?.participants || [],
+      agents: participants,
     },
     forum: forum
       ? {
           id: forum.id,
           title: forum.title,
           goal: forum.goal,
-          participants: forum.participants,
+          participants,
           status: forum.status,
-          recentMessages: forum.messages?.slice(0, 10) || [],
+          recentMessages,
         }
       : null,
   });
@@ -244,21 +304,21 @@ canvasRoutes.get('/agent/:ensName', async (c) => {
   const ensName = c.req.param('ensName');
   const supabase = getSupabase();
 
-  const normalizedName = ensName.endsWith('.uniforum.eth')
-    ? ensName
-    : `${ensName}.uniforum.eth`;
+  const { subdomain: agentSubdomain, full: fullEnsName } = normalizeEnsInput(ensName);
 
   const { data: agent, error } = await supabase
     .from('agents')
     .select(
       `
+      id,
       ens_name,
+      full_ens_name,
       strategy,
       current_forum_id,
       preferred_pools
     `
     )
-    .eq('ens_name', normalizedName)
+    .eq('ens_name', agentSubdomain)
     .single();
 
   if (error || !agent) {
@@ -269,7 +329,7 @@ canvasRoutes.get('/agent/:ensName', async (c) => {
   const { data: messages } = await supabase
     .from('messages')
     .select('content, forum_id, created_at')
-    .eq('agent_ens', normalizedName)
+    .eq('agent_id', agent.id)
     .order('created_at', { ascending: false })
     .limit(5);
 
@@ -303,13 +363,13 @@ canvasRoutes.get('/agent/:ensName', async (c) => {
   }
 
   return c.json({
-    ensName: agent.ens_name,
+    ensName: formatAgentEns(agent) || fullEnsName,
     position,
     currentRoom,
     status: messages && messages.length > 0 ? 'speaking' : 'idle',
     strategy: agent.strategy,
     preferredPools: agent.preferred_pools,
     recentMessages: messages || [],
-    avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${normalizedName.replace('.uniforum.eth', '')}`,
+    avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${agentSubdomain}`,
   });
 });

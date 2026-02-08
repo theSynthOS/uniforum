@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getSupabase } from '../lib/supabase';
+import { formatAgentEns, mapAgentIdsToEns, normalizeEnsInput } from '../lib/agents';
 import { authMiddleware, optionalAuthMiddleware, AuthUser } from '../lib/auth';
 
 export const forumsRoutes = new Hono<{
@@ -25,6 +26,55 @@ const createMessageSchema = z.object({
   type: z.enum(['discussion', 'proposal', 'vote', 'result']).default('discussion'),
 });
 
+async function getForumParticipantsMap(supabase: ReturnType<typeof getSupabase>, forumIds: string[]) {
+  const participantsByForum = new Map<string, string[]>();
+  if (forumIds.length === 0) return participantsByForum;
+
+  const { data: participantRows, error } = await supabase
+    .from('forum_participants')
+    .select('forum_id, agent_id, is_active')
+    .in('forum_id', forumIds)
+    .eq('is_active', true);
+
+  if (error) {
+    console.error('[forums] Participants fetch error:', error);
+    return participantsByForum;
+  }
+
+  const agentIds = (participantRows || []).map((row) => row.agent_id);
+  const agentEnsById = await mapAgentIdsToEns(supabase, agentIds);
+
+  for (const row of participantRows || []) {
+    const ens = agentEnsById.get(row.agent_id);
+    if (!ens) continue;
+    const list = participantsByForum.get(row.forum_id) || [];
+    list.push(ens);
+    participantsByForum.set(row.forum_id, list);
+  }
+
+  return participantsByForum;
+}
+
+async function isAgentActiveParticipant(
+  supabase: ReturnType<typeof getSupabase>,
+  forumId: string,
+  agentId: string
+) {
+  const { data, error } = await supabase
+    .from('forum_participants')
+    .select('id, is_active')
+    .eq('forum_id', forumId)
+    .eq('agent_id', agentId)
+    .maybeSingle();
+
+  if (error) {
+    console.error('[forums] Participant lookup error:', error);
+    return false;
+  }
+
+  return Boolean(data?.is_active);
+}
+
 // GET /forums - List forums
 forumsRoutes.get('/', optionalAuthMiddleware, async (c) => {
   const supabase = getSupabase();
@@ -39,8 +89,7 @@ forumsRoutes.get('/', optionalAuthMiddleware, async (c) => {
       title,
       goal,
       pool,
-      creator_agent_ens,
-      participants,
+      creator_agent_id,
       quorum_threshold,
       status,
       created_at,
@@ -70,8 +119,25 @@ forumsRoutes.get('/', optionalAuthMiddleware, async (c) => {
     return c.json({ error: 'Failed to fetch forums' }, 500);
   }
 
+  const forumsList = data || [];
+  const forumIds = forumsList.map((forum) => forum.id);
+  const creatorIds = forumsList.map((forum) => forum.creator_agent_id);
+  const participantsMap = await getForumParticipantsMap(supabase, forumIds);
+  const creatorEnsById = await mapAgentIdsToEns(supabase, creatorIds);
+
   return c.json({
-    forums: data || [],
+    forums: forumsList.map((forum) => ({
+      id: forum.id,
+      title: forum.title,
+      goal: forum.goal,
+      pool: forum.pool,
+      creatorAgentEns: creatorEnsById.get(forum.creator_agent_id) || '',
+      participants: participantsMap.get(forum.id) || [],
+      quorumThreshold: forum.quorum_threshold,
+      status: forum.status,
+      createdAt: forum.created_at,
+      updatedAt: forum.updated_at,
+    })),
     pagination: {
       limit: limitNum,
       offset: offsetNum,
@@ -104,12 +170,14 @@ forumsRoutes.post('/', authMiddleware, async (c) => {
   }
 
   const { title, goal, pool, creatorAgentEns, quorumThreshold, timeoutMinutes } = parsed.data;
+  const { subdomain: creatorSubdomain, full: creatorFullEns } =
+    normalizeEnsInput(creatorAgentEns);
 
   // Verify the creator agent exists and belongs to user
   const { data: agent } = await supabase
     .from('agents')
-    .select('id, owner_address, ens_name')
-    .eq('ens_name', creatorAgentEns)
+    .select('id, owner_address, ens_name, full_ens_name')
+    .eq('ens_name', creatorSubdomain)
     .single();
 
   if (!agent) {
@@ -127,8 +195,7 @@ forumsRoutes.post('/', authMiddleware, async (c) => {
       title,
       goal,
       pool: pool || null,
-      creator_agent_ens: creatorAgentEns,
-      participants: [creatorAgentEns],
+      creator_agent_id: agent.id,
       quorum_threshold: quorumThreshold,
       timeout_minutes: timeoutMinutes,
       status: 'active',
@@ -141,8 +208,20 @@ forumsRoutes.post('/', authMiddleware, async (c) => {
     return c.json({ error: 'Failed to create forum' }, 500);
   }
 
+  const { error: participantError } = await supabase.from('forum_participants').insert({
+    forum_id: forum.id,
+    agent_id: agent.id,
+    is_active: true,
+  });
+
+  if (participantError) {
+    console.error('[forums] Participant create error:', participantError);
+  }
+
   // Update agent's current forum
   await supabase.from('agents').update({ current_forum_id: forum.id }).eq('id', agent.id);
+
+  const creatorEns = formatAgentEns(agent) || creatorFullEns;
 
   return c.json(
     {
@@ -150,8 +229,8 @@ forumsRoutes.post('/', authMiddleware, async (c) => {
       title: forum.title,
       goal: forum.goal,
       pool: forum.pool,
-      creatorAgentEns: forum.creator_agent_ens,
-      participants: forum.participants,
+      creatorAgentEns: creatorEns,
+      participants: [creatorEns],
       quorumThreshold: forum.quorum_threshold,
       status: forum.status,
       createdAt: forum.created_at,
@@ -165,48 +244,74 @@ forumsRoutes.get('/:forumId', async (c) => {
   const forumId = c.req.param('forumId');
   const supabase = getSupabase();
 
-  const { data: forum, error } = await supabase
-    .from('forums')
-    .select(
-      `
-      *,
-      messages:messages(
-        id,
-        agent_ens,
-        content,
-        type,
-        created_at
-      ),
-      proposals:proposals(
-        id,
-        action,
-        params,
-        status,
-        created_at
-      )
-    `
-    )
-    .eq('id', forumId)
-    .single();
+  const { data: forum, error } = await supabase.from('forums').select('*').eq('id', forumId).single();
 
   if (error || !forum) {
     return c.json({ error: 'Forum not found' }, 404);
   }
+
+  const participantsMap = await getForumParticipantsMap(supabase, [forum.id]);
+  const creatorEnsById = await mapAgentIdsToEns(supabase, [forum.creator_agent_id]);
+
+  const { data: messages } = await supabase
+    .from('messages')
+    .select('id, forum_id, agent_id, content, type, created_at, metadata')
+    .eq('forum_id', forumId)
+    .order('created_at', { ascending: true });
+
+  const messageAgentIds = (messages || [])
+    .map((message) => message.agent_id)
+    .filter((id): id is string => Boolean(id));
+  const messageEnsById = await mapAgentIdsToEns(supabase, messageAgentIds);
+
+  const messageList =
+    messages?.map((message) => ({
+      id: message.id,
+      forumId: message.forum_id,
+      agentEns: message.agent_id ? messageEnsById.get(message.agent_id) || '' : 'system',
+      content: message.content,
+      type: message.type,
+      createdAt: message.created_at,
+      metadata: (message.metadata as Record<string, unknown> | null) || undefined,
+    })) || [];
+
+  const { data: proposals } = await supabase
+    .from('proposals')
+    .select('id, action, params, hooks, status, created_at, creator_agent_id')
+    .eq('forum_id', forumId)
+    .order('created_at', { ascending: false });
+
+  const proposerEnsById = await mapAgentIdsToEns(
+    supabase,
+    (proposals || []).map((proposal) => proposal.creator_agent_id)
+  );
+
+  const proposalList =
+    proposals?.map((proposal) => ({
+      id: proposal.id,
+      forumId: forum.id,
+      proposerEns: proposerEnsById.get(proposal.creator_agent_id) || '',
+      action: proposal.action,
+      params: proposal.params as Record<string, unknown>,
+      hooks: (proposal.hooks as Record<string, unknown> | null) || undefined,
+      status: proposal.status,
+      createdAt: proposal.created_at,
+    })) || [];
 
   return c.json({
     id: forum.id,
     title: forum.title,
     goal: forum.goal,
     pool: forum.pool,
-    creatorAgentEns: forum.creator_agent_ens,
-    participants: forum.participants,
+    creatorAgentEns: creatorEnsById.get(forum.creator_agent_id) || '',
+    participants: participantsMap.get(forum.id) || [],
     quorumThreshold: forum.quorum_threshold,
     timeoutMinutes: forum.timeout_minutes,
     status: forum.status,
     createdAt: forum.created_at,
     updatedAt: forum.updated_at,
-    messages: forum.messages || [],
-    proposals: forum.proposals || [],
+    messages: messageList,
+    proposals: proposalList,
   });
 });
 
@@ -227,12 +332,13 @@ forumsRoutes.post('/:forumId/join', authMiddleware, async (c) => {
   if (!agentEns) {
     return c.json({ error: 'agentEns is required' }, 400);
   }
+  const { subdomain: agentSubdomain, full: agentFullEns } = normalizeEnsInput(agentEns);
 
   // Verify agent ownership
   const { data: agent } = await supabase
     .from('agents')
-    .select('id, owner_address')
-    .eq('ens_name', agentEns)
+    .select('id, owner_address, ens_name, full_ens_name')
+    .eq('ens_name', agentSubdomain)
     .single();
 
   if (!agent) {
@@ -246,7 +352,7 @@ forumsRoutes.post('/:forumId/join', authMiddleware, async (c) => {
   // Get forum
   const { data: forum } = await supabase
     .from('forums')
-    .select('id, participants, status')
+    .select('id, status')
     .eq('id', forumId)
     .single();
 
@@ -258,23 +364,29 @@ forumsRoutes.post('/:forumId/join', authMiddleware, async (c) => {
     return c.json({ error: 'Forum is not active' }, 400);
   }
 
-  if (forum.participants.includes(agentEns)) {
+  if (await isAgentActiveParticipant(supabase, forumId, agent.id)) {
     return c.json({ error: 'Agent already in forum' }, 400);
   }
 
-  // Add to participants
-  const updatedParticipants = [...forum.participants, agentEns];
-  await supabase
-    .from('forums')
-    .update({ participants: updatedParticipants })
-    .eq('id', forumId);
+  await supabase.from('forum_participants').upsert(
+    {
+      forum_id: forumId,
+      agent_id: agent.id,
+      is_active: true,
+      left_at: null,
+    },
+    { onConflict: 'forum_id,agent_id' }
+  );
 
   // Update agent's current forum
   await supabase.from('agents').update({ current_forum_id: forumId }).eq('id', agent.id);
 
+  const participantsMap = await getForumParticipantsMap(supabase, [forumId]);
+  const normalizedEns = formatAgentEns(agent) || agentFullEns;
+
   return c.json({
     success: true,
-    participants: updatedParticipants,
+    participants: participantsMap.get(forumId) || [normalizedEns],
   });
 });
 
@@ -295,12 +407,13 @@ forumsRoutes.post('/:forumId/leave', authMiddleware, async (c) => {
   if (!agentEns) {
     return c.json({ error: 'agentEns is required' }, 400);
   }
+  const { subdomain: agentSubdomain } = normalizeEnsInput(agentEns);
 
   // Verify agent ownership
   const { data: agent } = await supabase
     .from('agents')
     .select('id, owner_address')
-    .eq('ens_name', agentEns)
+    .eq('ens_name', agentSubdomain)
     .single();
 
   if (!agent) {
@@ -314,7 +427,7 @@ forumsRoutes.post('/:forumId/leave', authMiddleware, async (c) => {
   // Get forum
   const { data: forum } = await supabase
     .from('forums')
-    .select('id, participants, creator_agent_ens')
+    .select('id, creator_agent_id')
     .eq('id', forumId)
     .single();
 
@@ -322,23 +435,24 @@ forumsRoutes.post('/:forumId/leave', authMiddleware, async (c) => {
     return c.json({ error: 'Forum not found' }, 404);
   }
 
-  if (forum.creator_agent_ens === agentEns) {
+  if (forum.creator_agent_id === agent.id) {
     return c.json({ error: 'Creator cannot leave the forum' }, 400);
   }
 
-  // Remove from participants
-  const updatedParticipants = forum.participants.filter((p: string) => p !== agentEns);
   await supabase
-    .from('forums')
-    .update({ participants: updatedParticipants })
-    .eq('id', forumId);
+    .from('forum_participants')
+    .update({ is_active: false, left_at: new Date().toISOString() })
+    .eq('forum_id', forumId)
+    .eq('agent_id', agent.id);
 
   // Clear agent's current forum
   await supabase.from('agents').update({ current_forum_id: null }).eq('id', agent.id);
 
+  const participantsMap = await getForumParticipantsMap(supabase, [forumId]);
+
   return c.json({
     success: true,
-    participants: updatedParticipants,
+    participants: participantsMap.get(forumId) || [],
   });
 });
 
@@ -371,8 +485,22 @@ forumsRoutes.get('/:forumId/messages', async (c) => {
     return c.json({ error: 'Failed to fetch messages' }, 500);
   }
 
+  const agentIds = (data || [])
+    .map((message) => message.agent_id)
+    .filter((id): id is string => Boolean(id));
+  const agentEnsById = await mapAgentIdsToEns(supabase, agentIds);
+
   return c.json({
-    messages: data || [],
+    messages:
+      data?.map((message) => ({
+        id: message.id,
+        forumId: message.forum_id,
+        agentEns: message.agent_id ? agentEnsById.get(message.agent_id) || '' : 'system',
+        content: message.content,
+        type: message.type,
+        createdAt: message.created_at,
+        metadata: (message.metadata as Record<string, unknown> | null) || undefined,
+      })) || [],
     pagination: {
       limit: limitNum,
       offset: offsetNum,
@@ -406,12 +534,13 @@ forumsRoutes.post('/:forumId/messages', authMiddleware, async (c) => {
   }
 
   const { agentEns, content, type } = parsed.data;
+  const { subdomain: agentSubdomain, full: agentFullEns } = normalizeEnsInput(agentEns);
 
   // Verify agent ownership
   const { data: agent } = await supabase
     .from('agents')
-    .select('id, owner_address')
-    .eq('ens_name', agentEns)
+    .select('id, owner_address, ens_name, full_ens_name')
+    .eq('ens_name', agentSubdomain)
     .single();
 
   if (!agent) {
@@ -425,7 +554,7 @@ forumsRoutes.post('/:forumId/messages', authMiddleware, async (c) => {
   // Verify forum exists and agent is participant
   const { data: forum } = await supabase
     .from('forums')
-    .select('id, participants, status')
+    .select('id, status')
     .eq('id', forumId)
     .single();
 
@@ -437,7 +566,7 @@ forumsRoutes.post('/:forumId/messages', authMiddleware, async (c) => {
     return c.json({ error: 'Forum is not active' }, 400);
   }
 
-  if (!forum.participants.includes(agentEns)) {
+  if (!(await isAgentActiveParticipant(supabase, forumId, agent.id))) {
     return c.json({ error: 'Agent is not a participant in this forum' }, 403);
   }
 
@@ -446,7 +575,7 @@ forumsRoutes.post('/:forumId/messages', authMiddleware, async (c) => {
     .from('messages')
     .insert({
       forum_id: forumId,
-      agent_ens: agentEns,
+      agent_id: agent.id,
       content,
       type,
     })
@@ -462,7 +591,7 @@ forumsRoutes.post('/:forumId/messages', authMiddleware, async (c) => {
     {
       id: message.id,
       forumId: message.forum_id,
-      agentEns: message.agent_ens,
+      agentEns: formatAgentEns(agent) || agentFullEns,
       content: message.content,
       type: message.type,
       createdAt: message.created_at,
@@ -482,7 +611,8 @@ forumsRoutes.get('/:forumId/proposals', async (c) => {
       `
       *,
       votes:votes(
-        agent_ens,
+        id,
+        agent_id,
         vote,
         created_at
       )
@@ -496,8 +626,37 @@ forumsRoutes.get('/:forumId/proposals', async (c) => {
     return c.json({ error: 'Failed to fetch proposals' }, 500);
   }
 
+  const proposalList = proposals || [];
+  const proposerEnsById = await mapAgentIdsToEns(
+    supabase,
+    proposalList.map((proposal) => proposal.creator_agent_id)
+  );
+  const voteAgentIds = proposalList.flatMap((proposal) =>
+    (proposal.votes || []).map((vote: { agent_id: string }) => vote.agent_id)
+  );
+  const voteEnsById = await mapAgentIdsToEns(supabase, voteAgentIds);
+
   return c.json({
-    proposals: proposals || [],
+    proposals: proposalList.map((proposal) => ({
+      id: proposal.id,
+      forumId: proposal.forum_id,
+      proposerEns: proposerEnsById.get(proposal.creator_agent_id) || '',
+      action: proposal.action,
+      params: proposal.params as Record<string, unknown>,
+      hooks: (proposal.hooks as Record<string, unknown> | null) || undefined,
+      status: proposal.status,
+      createdAt: proposal.created_at,
+      votes:
+        proposal.votes?.map(
+          (vote: { id: string; agent_id: string; vote: string; created_at: string }) => ({
+            id: vote.id,
+          proposalId: proposal.id,
+          agentEns: voteEnsById.get(vote.agent_id) || '',
+          vote: vote.vote,
+          createdAt: vote.created_at,
+          })
+        ) || [],
+    })),
   });
 });
 
@@ -519,12 +678,13 @@ forumsRoutes.post('/:forumId/proposals', authMiddleware, async (c) => {
   if (!agentEns || !action || !params) {
     return c.json({ error: 'agentEns, action, and params are required' }, 400);
   }
+  const { subdomain: agentSubdomain, full: agentFullEns } = normalizeEnsInput(agentEns);
 
   // Verify agent ownership
   const { data: agent } = await supabase
     .from('agents')
-    .select('id, owner_address')
-    .eq('ens_name', agentEns)
+    .select('id, owner_address, ens_name, full_ens_name')
+    .eq('ens_name', agentSubdomain)
     .single();
 
   if (!agent) {
@@ -538,7 +698,7 @@ forumsRoutes.post('/:forumId/proposals', authMiddleware, async (c) => {
   // Verify forum and participation
   const { data: forum } = await supabase
     .from('forums')
-    .select('id, participants, status')
+    .select('id, status, timeout_minutes')
     .eq('id', forumId)
     .single();
 
@@ -550,7 +710,7 @@ forumsRoutes.post('/:forumId/proposals', authMiddleware, async (c) => {
     return c.json({ error: 'Forum is not active' }, 400);
   }
 
-  if (!forum.participants.includes(agentEns)) {
+  if (!(await isAgentActiveParticipant(supabase, forumId, agent.id))) {
     return c.json({ error: 'Agent is not a participant' }, 403);
   }
 
@@ -571,11 +731,14 @@ forumsRoutes.post('/:forumId/proposals', authMiddleware, async (c) => {
     .from('proposals')
     .insert({
       forum_id: forumId,
-      proposer_ens: agentEns,
+      creator_agent_id: agent.id,
       action,
       params,
       hooks: hooks || null,
       status: 'voting',
+      expires_at: new Date(
+        Date.now() + (forum.timeout_minutes ?? 30) * 60 * 1000
+      ).toISOString(),
     })
     .select()
     .single();
@@ -588,7 +751,7 @@ forumsRoutes.post('/:forumId/proposals', authMiddleware, async (c) => {
   // Also create a message for the proposal
   await supabase.from('messages').insert({
     forum_id: forumId,
-    agent_ens: agentEns,
+    agent_id: agent.id,
     content: `Proposed: ${action} - ${JSON.stringify(params)}`,
     type: 'proposal',
     metadata: { proposalId: proposal.id },
@@ -601,7 +764,7 @@ forumsRoutes.post('/:forumId/proposals', authMiddleware, async (c) => {
     {
       id: proposal.id,
       forumId: proposal.forum_id,
-      proposerEns: proposal.proposer_ens,
+      proposerEns: formatAgentEns(agent) || agentFullEns,
       action: proposal.action,
       params: proposal.params,
       hooks: proposal.hooks,

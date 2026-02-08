@@ -1,5 +1,6 @@
 import { Context } from 'hono';
 import { getSupabase } from '../lib/supabase';
+import { mapAgentIdsToEns } from '../lib/agents';
 
 /**
  * WebSocket Handler for Real-time Updates
@@ -110,17 +111,29 @@ export function setupRealtimeSubscriptions() {
       },
       (payload) => {
         const message = payload.new;
-        broadcastToForum(message.forum_id, {
-          type: 'message',
-          data: {
-            id: message.id,
-            forumId: message.forum_id,
-            agentEns: message.agent_ens,
-            content: message.content,
-            messageType: message.type,
-            createdAt: message.created_at,
-          },
-        });
+        const resolveAgentEns = async () => {
+          if (message.agent_ens) return message.agent_ens;
+          if (!message.agent_id) return 'system';
+          const ensById = await mapAgentIdsToEns(supabase, [message.agent_id]);
+          return ensById.get(message.agent_id) || '';
+        };
+        resolveAgentEns()
+          .then((agentEns) => {
+            broadcastToForum(message.forum_id, {
+              type: 'message',
+              data: {
+                id: message.id,
+                forumId: message.forum_id,
+                agentEns,
+                content: message.content,
+                messageType: message.type,
+                createdAt: message.created_at,
+              },
+            });
+          })
+          .catch((error) => {
+            console.warn('[ws] Failed to resolve agent ENS for message:', error);
+          });
       }
     )
     .subscribe();
@@ -137,16 +150,28 @@ export function setupRealtimeSubscriptions() {
       },
       (payload) => {
         const proposal = payload.new;
-        broadcastToForum(proposal.forum_id, {
-          type: 'proposal_created',
-          data: {
-            id: proposal.id,
-            forumId: proposal.forum_id,
-            proposerEns: proposal.proposer_ens,
-            action: proposal.action,
-            params: proposal.params,
-          },
-        });
+        const resolveProposerEns = async () => {
+          if (proposal.proposer_ens) return proposal.proposer_ens;
+          if (!proposal.creator_agent_id) return '';
+          const ensById = await mapAgentIdsToEns(supabase, [proposal.creator_agent_id]);
+          return ensById.get(proposal.creator_agent_id) || '';
+        };
+        resolveProposerEns()
+          .then((proposerEns) => {
+            broadcastToForum(proposal.forum_id, {
+              type: 'proposal_created',
+              data: {
+                id: proposal.id,
+                forumId: proposal.forum_id,
+                proposerEns,
+                action: proposal.action,
+                params: proposal.params,
+              },
+            });
+          })
+          .catch((error) => {
+            console.warn('[ws] Failed to resolve proposer ENS:', error);
+          });
       }
     )
     .on(
@@ -195,11 +220,18 @@ export function setupRealtimeSubscriptions() {
           .single();
 
         if (proposal) {
+          let agentEns = '';
+          if (vote.agent_ens) {
+            agentEns = vote.agent_ens;
+          } else if (vote.agent_id) {
+            const ensById = await mapAgentIdsToEns(supabase, [vote.agent_id]);
+            agentEns = ensById.get(vote.agent_id) || '';
+          }
           broadcastToForum(proposal.forum_id, {
             type: 'vote_cast',
             data: {
               proposalId: vote.proposal_id,
-              agentEns: vote.agent_ens,
+              agentEns,
               vote: vote.vote,
             },
           });

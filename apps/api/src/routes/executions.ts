@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { getSupabase } from '../lib/supabase';
+import { mapAgentIdsToEns, normalizeEnsInput } from '../lib/agents';
 import { authMiddleware, AuthUser } from '../lib/auth';
 
 export const executionsRoutes = new Hono<{
@@ -92,11 +93,10 @@ executionsRoutes.post('/', authMiddleware, async (c) => {
       `
       *,
       forum:forums(
-        id,
-        participants
+        id
       ),
       votes:votes(
-        agent_ens,
+        agent_id,
         vote
       )
     `
@@ -124,10 +124,15 @@ executionsRoutes.post('/', authMiddleware, async (c) => {
   }
 
   // Get agreeing agents
-  const agreeingAgents =
+  const agreeingAgentIds =
     proposal.votes
       ?.filter((v: { vote: string }) => v.vote === 'agree')
-      .map((v: { agent_ens: string }) => v.agent_ens) || [];
+      .map((v: { agent_id: string }) => v.agent_id) || [];
+
+  const agreeingEnsById = await mapAgentIdsToEns(supabase, agreeingAgentIds);
+  const agreeingAgents = agreeingAgentIds
+    .map((agentId) => agreeingEnsById.get(agentId))
+    .filter((ens): ens is string => Boolean(ens));
 
   if (agreeingAgents.length === 0) {
     return c.json({ error: 'No agreeing agents to execute' }, 400);
@@ -170,7 +175,7 @@ executionsRoutes.post('/', authMiddleware, async (c) => {
   // Create system message
   await supabase.from('messages').insert({
     forum_id: proposal.forum_id,
-    agent_ens: 'system',
+    agent_id: null,
     content: `Execution started for ${agreeingAgents.length} agents`,
     type: 'result',
   });
@@ -272,29 +277,88 @@ executionsRoutes.patch('/:executionId', async (c) => {
 
   // If execution completed, update agent metrics
   if (status === 'success') {
+    const { subdomain: executorSubdomain } = normalizeEnsInput(execution.agent_ens);
     const { data: agent } = await supabase
       .from('agents')
       .select('id')
-      .eq('ens_name', execution.agent_ens)
+      .eq('ens_name', executorSubdomain)
       .single();
 
     if (agent) {
-      await supabase.rpc('increment_executions_performed', { agent_id_param: agent.id });
+      const { error: executionsRpcError } = await supabase.rpc('increment_executions_performed', {
+        agent_id_param: agent.id,
+      });
+      if (executionsRpcError) {
+        const { data: metrics, error: metricsError } = await supabase
+          .from('agent_metrics')
+          .select('successful_executions')
+          .eq('agent_id', agent.id)
+          .single();
+
+        if (metricsError) {
+          console.warn(
+            '[executions] Failed to load agent metrics for success increment:',
+            metricsError
+          );
+        } else {
+          const nextSuccesses = (metrics?.successful_executions ?? 0) + 1;
+          const { error: updateError } = await supabase
+            .from('agent_metrics')
+            .update({ successful_executions: nextSuccesses })
+            .eq('agent_id', agent.id);
+
+          if (updateError) {
+            console.warn('[executions] Failed to update agent success metrics:', updateError);
+          }
+        }
+      }
     }
 
     // Create success message
     await supabase.from('messages').insert({
       forum_id: execution.forum_id,
-      agent_ens: execution.agent_ens,
+      agent_id: agent?.id ?? null,
       content: `Execution successful! TX: ${txHash}`,
       type: 'result',
       metadata: { txHash },
     });
   } else if (status === 'failed') {
+    const { subdomain: executorSubdomain } = normalizeEnsInput(execution.agent_ens);
+    const { data: agent } = await supabase
+      .from('agents')
+      .select('id')
+      .eq('ens_name', executorSubdomain)
+      .single();
+
+    if (agent) {
+      const { data: metrics, error: metricsError } = await supabase
+        .from('agent_metrics')
+        .select('failed_executions')
+        .eq('agent_id', agent.id)
+        .single();
+
+      if (metricsError) {
+        console.warn(
+          '[executions] Failed to load agent metrics for failure increment:',
+          metricsError
+        );
+      } else {
+        const nextFailures = (metrics?.failed_executions ?? 0) + 1;
+        const { error: updateError } = await supabase
+          .from('agent_metrics')
+          .update({ failed_executions: nextFailures })
+          .eq('agent_id', agent.id);
+
+        if (updateError) {
+          console.warn('[executions] Failed to update agent failure metrics:', updateError);
+        }
+      }
+    }
+
     // Create failure message
     await supabase.from('messages').insert({
       forum_id: execution.forum_id,
-      agent_ens: execution.agent_ens,
+      agent_id: agent?.id ?? null,
       content: `Execution failed: ${errorMessage}`,
       type: 'result',
       metadata: { error: errorMessage },
