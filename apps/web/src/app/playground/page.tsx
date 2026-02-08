@@ -22,7 +22,8 @@ const vt323 = VT323({
 
 const ENS_SUFFIX = '.uniforum.eth';
 const ENS_CHAIN_ID = Number(process.env.NEXT_PUBLIC_ENS_CHAIN_ID || mainnet.id);
-const ENS_CHAIN = ENS_CHAIN_ID === sepolia.id ? sepolia : mainnet;
+const ENS_CHAIN: typeof sepolia | typeof mainnet =
+  ENS_CHAIN_ID === sepolia.id ? sepolia : mainnet;
 
 function toSubdomain(ensName: string) {
   return ensName.endsWith(ENS_SUFFIX) ? ensName.slice(0, -ENS_SUFFIX.length) : ensName;
@@ -186,7 +187,7 @@ export default function PlaygroundPage() {
                 },
               ],
             });
-          } else if (ENS_CHAIN.id === mainnet.id) {
+          } else {
             await ethereum.request({
               method: 'wallet_addEthereumChain',
               params: [
@@ -202,10 +203,6 @@ export default function PlaygroundPage() {
                 },
               ],
             });
-          } else {
-            throw new Error(
-              `Wallet is on chain ${chainId}. Switch to ${ENS_CHAIN.name} (chain ${ENS_CHAIN.id}).`
-            );
           }
         }
       };
@@ -215,7 +212,7 @@ export default function PlaygroundPage() {
       const client = createPublicClient({
         chain: ENS_CHAIN,
         transport: custom(ethereum),
-        ccipRead: true,
+        ccipRead: {},
       });
 
       const resolvedName = toEnsName(name);

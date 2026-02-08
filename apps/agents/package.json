@@ -19,6 +19,7 @@
     "@uniforum/forum": "workspace:*",
     "@uniforum/shared": "workspace:*",
     "viem": "^2.7.0",
+    "ethers": "^5.7.0",
     "zod": "^3.22.0"
   },
   "devDependencies": {
