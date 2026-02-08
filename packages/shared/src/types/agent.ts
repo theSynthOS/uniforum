@@ -52,7 +52,7 @@ export const createAgentSchema = z.object({
     })
     .optional(),
   temperatureDelta: z.number().min(-0.2).max(0.2).optional(),
-  modelProvider: z.enum(['openai', 'redpill', 'claude']).optional(),
+  modelProvider: z.enum(['openai', 'claude']).optional(),
 });
 
 export type CreateAgentInput = z.infer<typeof createAgentSchema>;
