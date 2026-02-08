@@ -22,7 +22,8 @@ const vt323 = VT323({
 
 const ENS_SUFFIX = '.uniforum.eth';
 const ENS_CHAIN_ID = Number(process.env.NEXT_PUBLIC_ENS_CHAIN_ID || mainnet.id);
-const ENS_CHAIN = ENS_CHAIN_ID === sepolia.id ? sepolia : mainnet;
+const ENS_CHAIN: typeof sepolia | typeof mainnet =
+  ENS_CHAIN_ID === sepolia.id ? sepolia : mainnet;
 
 function toSubdomain(ensName: string) {
   return ensName.endsWith(ENS_SUFFIX) ? ensName.slice(0, -ENS_SUFFIX.length) : ensName;
@@ -36,6 +37,7 @@ export default function PlaygroundPage() {
   const { authenticated, login, getToken, walletAddress } = useAuth();
 
   const [ownedAgents, setOwnedAgents] = useState<Agent[]>([]);
+  const [allAgents, setAllAgents] = useState<Agent[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<string>('');
   const [joinAgent, setJoinAgent] = useState<string>('');
   const [speakerAgent, setSpeakerAgent] = useState<string>('');
@@ -57,6 +59,7 @@ export default function PlaygroundPage() {
   const [resolving, setResolving] = useState(false);
 
   const ownedAgentNames = useMemo(() => ownedAgents.map((a) => a.ensName), [ownedAgents]);
+  const allAgentNames = useMemo(() => allAgents.map((a) => a.ensName), [allAgents]);
 
   useEffect(() => {
     const loadAgents = async () => {
@@ -64,16 +67,18 @@ export default function PlaygroundPage() {
       setError(null);
       try {
         const response = await agents.list({ limit: 50 });
+        const all = response.agents;
+        setAllAgents(all);
         const lowerWallet = walletAddress.toLowerCase();
-        const mine = response.agents.filter(
+        const mine = all.filter(
           (agent) => agent.ownerAddress?.toLowerCase() === lowerWallet
         );
         setOwnedAgents(mine);
         if (!selectedAgent && mine.length) {
           setSelectedAgent(mine[0].ensName);
         }
-        if (!joinAgent && mine.length > 1) {
-          setJoinAgent(mine[1].ensName);
+        if (!joinAgent && all.length > 1) {
+          setJoinAgent(all[1].ensName);
         }
         if (!speakerAgent && mine.length) {
           setSpeakerAgent(mine[0].ensName);
@@ -186,7 +191,7 @@ export default function PlaygroundPage() {
                 },
               ],
             });
-          } else if (ENS_CHAIN.id === mainnet.id) {
+          } else {
             await ethereum.request({
               method: 'wallet_addEthereumChain',
               params: [
@@ -202,10 +207,6 @@ export default function PlaygroundPage() {
                 },
               ],
             });
-          } else {
-            throw new Error(
-              `Wallet is on chain ${chainId}. Switch to ${ENS_CHAIN.name} (chain ${ENS_CHAIN.id}).`
-            );
           }
         }
       };
@@ -215,7 +216,7 @@ export default function PlaygroundPage() {
       const client = createPublicClient({
         chain: ENS_CHAIN,
         transport: custom(ethereum),
-        ccipRead: true,
+        ccipRead: {},
       });
 
       const resolvedName = toEnsName(name);
@@ -443,7 +444,7 @@ export default function PlaygroundPage() {
                   className="border-2 border-[#3a2b1f] bg-[#120d0a] px-3 py-2 text-[#f5e6c8]"
                 >
                   <option value="">Select agent to join</option>
-                  {ownedAgentNames.map((name) => (
+                  {allAgentNames.map((name) => (
                     <option key={name} value={name}>
                       {name}
                     </option>
@@ -476,7 +477,7 @@ export default function PlaygroundPage() {
                 className="border-2 border-[#3a2b1f] bg-[#120d0a] px-3 py-2 text-[#f5e6c8]"
               >
                 <option value="">Select agent</option>
-                {ownedAgentNames.map((name) => (
+                {allAgentNames.map((name) => (
                   <option key={name} value={name}>
                     {name}
                   </option>
@@ -511,6 +512,16 @@ export default function PlaygroundPage() {
                     <span>{new Date(message.createdAt).toLocaleTimeString()}</span>
                   </div>
                   <p className="mt-2 text-[#f5e6c8]">{message.content}</p>
+                  {typeof message.metadata?.txUrl === 'string' && message.metadata.txUrl ? (
+                    <a
+                      className="mt-2 inline-flex text-xs text-[#ffd966] underline decoration-[#ffd966]/60 hover:text-[#ffdf7a]"
+                      href={message.metadata.txUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      View transaction
+                    </a>
+                  ) : null}
                 </div>
               ))
             )}
@@ -528,7 +539,7 @@ export default function PlaygroundPage() {
                 className="border-2 border-[#3a2b1f] bg-[#120d0a] px-3 py-2 text-[#f5e6c8]"
               >
                 <option value="">Select an agent</option>
-                {(forumParticipants.length ? forumParticipants : ownedAgentNames).map((name) => (
+                {(forumParticipants.length ? forumParticipants : allAgentNames).map((name) => (
                   <option key={name} value={name}>
                     {name}
                   </option>

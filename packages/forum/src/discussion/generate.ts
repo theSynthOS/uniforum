@@ -20,6 +20,9 @@ export interface AgentDiscussionContext {
     enabled?: boolean;
     rounds?: number;
     delayMs?: number;
+    minDurationMs?: number;
+    maxRounds?: number;
+    minIntervalMs?: number;
   };
 }
 
@@ -40,6 +43,7 @@ export function buildDiscussionPrompt(
   agent: AgentDiscussionContext,
   context: DiscussionContext
 ): string {
+  const nowIso = new Date().toISOString();
   const recentMessagesText = context.recentMessages
     .slice(-5)
     .map((m) => `${m.agentEnsName}: ${m.content}`)
@@ -61,7 +65,8 @@ Forum Context:
 - Title: ${context.forum.title}
 - Goal: ${context.forum.goal}
 - Pool Focus: ${context.forum.pool || 'General'}
-${context.poolSnapshot ? `- Pool Snapshot: ${JSON.stringify(context.poolSnapshot)}` : ''}
+- Current Time (UTC): ${nowIso}
+${context.poolSnapshot ? `- Pool Data: ${JSON.stringify(context.poolSnapshot)}` : `- Pool Data: Not available (use your ${agent.preferredPools.join(', ')} expertise)`}
 
 Recent Messages:
 ${recentMessagesText || '(No messages yet - you are starting the discussion)'}
@@ -69,11 +74,14 @@ ${recentMessagesText || '(No messages yet - you are starting the discussion)'}
 ${context.currentProposal ? `Current Proposal: ${JSON.stringify(context.currentProposal)}` : '(No proposal yet)'}
 
 Instructions:
-1. Provide your perspective on the discussion based on your expertise and strategy
-2. Be concise (2-3 sentences maximum)
-3. If suggesting a specific strategy, include concrete numbers
-4. Reference other agents' points if relevant
-5. Stay in character based on your ${agent.strategy} strategy
+1. Share a SPECIFIC strategy or opinion based on your ${agent.strategy} approach
+2. Use concrete numbers and parameters (amounts, ranges, fee tiers, slippage)
+3. Explain WHY your strategy would work given your expertise
+4. If pool data is available, reference it; otherwise use your knowledge of ${agent.preferredPools.join(', ')}
+5. Be concise (3-5 sentences) and actionable - NO meta-discussion about "gathering data" or "analyzing"
+6. Stay in character: ${agent.strategy === 'conservative' ? 'prioritize safety and capital preservation' : agent.strategy === 'aggressive' ? 'maximize returns with calculated risks' : 'balance risk and reward'}
+
+IMPORTANT: Do NOT say things like "let me fetch data" or "I'll gather information". State your strategy directly.
 
 Your response:
 `.trim();
@@ -86,6 +94,7 @@ export function buildDebatePrompt(
   agent: AgentDiscussionContext,
   context: DiscussionContext
 ): string {
+  const nowIso = new Date().toISOString();
   const recentMessagesText = context.recentMessages
     .slice(-5)
     .map((m) => `${m.agentEnsName}: ${m.content}`)
@@ -105,15 +114,20 @@ Forum Context:
 - Title: ${context.forum.title}
 - Goal: ${context.forum.goal}
 - Pool Focus: ${context.forum.pool || 'General'}
-${context.poolSnapshot ? `- Pool Snapshot: ${JSON.stringify(context.poolSnapshot)}` : ''}
+- Current Time (UTC): ${nowIso}
+${context.poolSnapshot ? `- Pool Data: ${JSON.stringify(context.poolSnapshot)}` : `- Pool Data: Not available (use your ${agent.preferredPools.join(', ')} expertise)`}
 
 Recent Messages:
 ${recentMessagesText || '(No messages yet)'}
 
 Instructions:
-1. Offer a critique, counterpoint, or refinement to prior points
-2. Provide at least one concrete numeric or parameter suggestion
-3. Keep it concise (2-3 sentences)
+1. Challenge or refine the previous suggestions with specific reasoning
+2. Provide concrete alternatives (different amounts, fee tiers, pool allocations, etc.)
+3. Explain WHY your approach is better given your ${agent.strategy} strategy
+4. Reference specific risks or opportunities based on your ${agent.preferredPools.join(', ')} experience
+5. Be direct and concise (3-5 sentences) - NO meta-discussion
+
+IMPORTANT: State your counterpoint directly. Do NOT say "let me analyze" or "I'll review".
 
 Your response:
 `.trim();
@@ -125,7 +139,8 @@ Your response:
 export function shouldParticipate(
   agent: AgentDiscussionContext,
   forum: Forum,
-  recentMessages: ForumMessage[]
+  recentMessages: ForumMessage[],
+  options?: { minIntervalMs?: number }
 ): { should: boolean; reason: string } {
   // Always participate if no messages yet
   if (recentMessages.length === 0) {
@@ -161,7 +176,7 @@ export function shouldParticipate(
 
   if (agentLastMessage) {
     const timeSinceLastMessage = Date.now() - new Date(agentLastMessage.createdAt).getTime();
-    const minInterval = 30 * 1000; // 30 seconds minimum between messages
+    const minInterval = Math.max(250, options?.minIntervalMs ?? 30 * 1000);
 
     if (timeSinceLastMessage < minInterval) {
       return { should: false, reason: 'Too soon since last message' };

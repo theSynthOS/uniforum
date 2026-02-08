@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@elizaos/core": "^1.7.2",
+    "@elizaos/plugin-anthropic": "^1.0.0",
     "@elizaos/plugin-openai": "^1.0.0",
     "@elizaos/plugin-sql": "^1.0.0",
     "@supabase/supabase-js": "^2.39.0",
@@ -19,6 +20,7 @@
     "@uniforum/forum": "workspace:*",
     "@uniforum/shared": "workspace:*",
     "viem": "^2.7.0",
+    "ethers": "^5.7.0",
     "zod": "^3.22.0"
   },
   "devDependencies": {

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getSupabase } from '../lib/supabase';
 import { formatAgentEns, mapAgentIdsToEns, normalizeEnsInput } from '../lib/agents';
 import { authMiddleware, optionalAuthMiddleware, AuthUser } from '../lib/auth';
+import { verifyAgentCanJoinForum } from '../lib/forumVerification';
 
 export const forumsRoutes = new Hono<{
   Variables: {
@@ -184,7 +185,7 @@ forumsRoutes.post('/', authMiddleware, async (c) => {
     return c.json({ error: 'Creator agent not found' }, 404);
   }
 
-  if (agent.owner_address !== user.walletAddress) {
+  if (agent.owner_address?.toLowerCase() !== user.walletAddress?.toLowerCase()) {
     return c.json({ error: 'You do not own this agent' }, 403);
   }
 
@@ -223,6 +224,9 @@ forumsRoutes.post('/', authMiddleware, async (c) => {
 
   const creatorEns = formatAgentEns(agent) || creatorFullEns;
 
+  // Return full forum details immediately to avoid race condition on frontend
+  const participantsMap = await getForumParticipantsMap(supabase, [forum.id]);
+
   return c.json(
     {
       id: forum.id,
@@ -230,7 +234,7 @@ forumsRoutes.post('/', authMiddleware, async (c) => {
       goal: forum.goal,
       pool: forum.pool,
       creatorAgentEns: creatorEns,
-      participants: [creatorEns],
+      participants: participantsMap.get(forum.id) || [creatorEns],
       quorumThreshold: forum.quorum_threshold,
       status: forum.status,
       createdAt: forum.created_at,
@@ -334,7 +338,7 @@ forumsRoutes.post('/:forumId/join', authMiddleware, async (c) => {
   }
   const { subdomain: agentSubdomain, full: agentFullEns } = normalizeEnsInput(agentEns);
 
-  // Verify agent ownership
+  // Look up the agent (any authenticated user can invite an agent to join a forum)
   const { data: agent } = await supabase
     .from('agents')
     .select('id, owner_address, ens_name, full_ens_name')
@@ -343,10 +347,6 @@ forumsRoutes.post('/:forumId/join', authMiddleware, async (c) => {
 
   if (!agent) {
     return c.json({ error: 'Agent not found' }, 404);
-  }
-
-  if (agent.owner_address !== user.walletAddress) {
-    return c.json({ error: 'You do not own this agent' }, 403);
   }
 
   // Get forum
@@ -366,6 +366,18 @@ forumsRoutes.post('/:forumId/join', authMiddleware, async (c) => {
 
   if (await isAgentActiveParticipant(supabase, forumId, agent.id)) {
     return c.json({ error: 'Agent already in forum' }, 400);
+  }
+
+  // Verify agent meets forum requirements (pool experience)
+  const verification = await verifyAgentCanJoinForum(supabase, agent.id, forumId);
+  if (!verification.allowed) {
+    return c.json(
+      {
+        error: verification.reason || 'Agent does not meet forum requirements',
+        details: verification.failedRequirements,
+      },
+      403
+    );
   }
 
   await supabase.from('forum_participants').upsert(
@@ -420,7 +432,7 @@ forumsRoutes.post('/:forumId/leave', authMiddleware, async (c) => {
     return c.json({ error: 'Agent not found' }, 404);
   }
 
-  if (agent.owner_address !== user.walletAddress) {
+  if (agent.owner_address?.toLowerCase() !== user.walletAddress?.toLowerCase()) {
     return c.json({ error: 'You do not own this agent' }, 403);
   }
 
@@ -547,7 +559,7 @@ forumsRoutes.post('/:forumId/messages', authMiddleware, async (c) => {
     return c.json({ error: 'Agent not found' }, 404);
   }
 
-  if (agent.owner_address !== user.walletAddress) {
+  if (agent.owner_address?.toLowerCase() !== user.walletAddress?.toLowerCase()) {
     return c.json({ error: 'You do not own this agent' }, 403);
   }
 
@@ -691,7 +703,7 @@ forumsRoutes.post('/:forumId/proposals', authMiddleware, async (c) => {
     return c.json({ error: 'Agent not found' }, 404);
   }
 
-  if (agent.owner_address !== user.walletAddress) {
+  if (agent.owner_address?.toLowerCase() !== user.walletAddress?.toLowerCase()) {
     return c.json({ error: 'You do not own this agent' }, 403);
   }
 

@@ -106,8 +106,12 @@ export interface CreateAgentRequest {
     enabled?: boolean;
     rounds?: number;
     delayMs?: number;
+    minDurationMs?: number;
+    maxRounds?: number;
+    minIntervalMs?: number;
   };
   temperatureDelta?: number;
+  modelProvider?: 'openai' | 'redpill' | 'claude';
 }
 
 export interface UploadAgentRequest extends CreateAgentRequest {

@@ -109,6 +109,7 @@ export default function CreateAgentModal({ onClose }: { onClose: () => void }) {
   const [debateRounds, setDebateRounds] = useState(2);
   const [debateDelayMs, setDebateDelayMs] = useState(1200);
   const [temperatureDelta, setTemperatureDelta] = useState(0.05);
+  const [modelProvider, setModelProvider] = useState<'openai' | 'redpill' | 'claude'>('claude');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdAgent, setCreatedAgent] = useState<Awaited<
@@ -292,6 +293,7 @@ export default function CreateAgentModal({ onClose }: { onClose: () => void }) {
           delayMs: debateDelayMs,
         },
         temperatureDelta,
+        modelProvider,
       };
 
       const agent = await agents.upload(
@@ -402,6 +404,51 @@ export default function CreateAgentModal({ onClose }: { onClose: () => void }) {
                       </button>
                     ))}
                   </div>
+                </label>
+
+                <label className="grid gap-2 text-sm">
+                  AI Model Provider
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setModelProvider('claude')}
+                      className={`border-2 px-3 py-2 text-[9px] uppercase tracking-[0.2em] sm:text-[10px] ${
+                        modelProvider === 'claude'
+                          ? 'border-[#ffd966] bg-[#3a2b1f] text-[#ffd966]'
+                          : 'border-[#3a2b1f] bg-[#120d0a] text-[#c9b693]'
+                      }`}
+                      style={{ fontFamily: '"Press Start 2P", "VT323", monospace' }}
+                    >
+                      Claude
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setModelProvider('openai')}
+                      className={`border-2 px-3 py-2 text-[9px] uppercase tracking-[0.2em] sm:text-[10px] ${
+                        modelProvider === 'openai'
+                          ? 'border-[#ffd966] bg-[#3a2b1f] text-[#ffd966]'
+                          : 'border-[#3a2b1f] bg-[#120d0a] text-[#c9b693]'
+                      }`}
+                      style={{ fontFamily: '"Press Start 2P", "VT323", monospace' }}
+                    >
+                      OpenAI
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setModelProvider('redpill')}
+                      className={`border-2 px-3 py-2 text-[9px] uppercase tracking-[0.2em] sm:text-[10px] ${
+                        modelProvider === 'redpill'
+                          ? 'border-[#ffd966] bg-[#3a2b1f] text-[#ffd966]'
+                          : 'border-[#3a2b1f] bg-[#120d0a] text-[#c9b693]'
+                      }`}
+                      style={{ fontFamily: '"Press Start 2P", "VT323", monospace' }}
+                    >
+                      RedPill
+                    </button>
+                  </div>
+                  <span className="text-xs text-[#c9b693]">
+                    Choose which AI provider will power this agent&apos;s responses
+                  </span>
                 </label>
 
                 <label className="grid gap-2 text-sm">
@@ -563,7 +610,7 @@ export default function CreateAgentModal({ onClose }: { onClose: () => void }) {
                     <input
                       type="number"
                       min={1}
-                      max={3}
+                      max={12}
                       value={debateRounds}
                       onChange={(event) => setDebateRounds(Number(event.target.value))}
                       className="w-full border-2 border-[#3a2b1f] bg-[#120d0a] px-3 py-2 text-sm text-[#f5e6c8]"

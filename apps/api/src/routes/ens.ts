@@ -18,6 +18,8 @@ import { secp256k1 } from '@noble/curves/secp256k1';
 export const ensRoutes = new Hono();
 
 const ENS_SUFFIX = `.${ENS_CONFIG.PARENT_DOMAIN}`;
+console.log('[ens.ts] Module loaded. ENS_SUFFIX:', ENS_SUFFIX, 'ENS_CONFIG:', ENS_CONFIG);
+
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const APP_URL =
   process.env.NEXT_PUBLIC_APP_URL ||
@@ -129,13 +131,11 @@ function buildSignatureHash(
 }
 
 function signHash(hash: `0x${string}`, privateKey: `0x${string}`): `0x${string}` {
-  const [sig, recovery] = secp256k1.sign(toBytes(hash), toBytes(privateKey), {
-    der: false,
-    recovered: true,
-  });
-  const r = toHex(sig.slice(0, 32)).slice(2).padStart(64, '0');
-  const s = toHex(sig.slice(32, 64)).slice(2).padStart(64, '0');
-  const v = (recovery ?? 0) + 27;
+  const sig = secp256k1.sign(toBytes(hash), toBytes(privateKey));
+  const compact = sig.toCompactRawBytes();
+  const r = toHex(compact.slice(0, 32)).slice(2).padStart(64, '0');
+  const s = toHex(compact.slice(32, 64)).slice(2).padStart(64, '0');
+  const v = (sig.recovery ?? 0) + 27;
   return `0x${r}${s}${v.toString(16).padStart(2, '0')}`;
 }
 
@@ -151,39 +151,56 @@ function getAgentWalletAddress(agent: unknown): string | undefined {
 }
 
 function normalizeWalletAddress(value: unknown): string {
+    console.log('normalizeWalletAddress', value);
   if (typeof value !== 'string') return ZERO_ADDRESS;
   return isAddress(value) ? value : ZERO_ADDRESS;
 }  
 
 async function resolveRecord(name: string, data: `0x${string}`) {
-  const { subdomain, full } = normalizeEnsInput(name);
-  if (!full.endsWith(ENS_SUFFIX)) {
-    throw new Error('Unsupported ENS domain');
-  }
+  console.log('[resolveRecord] Starting with name:', name, 'data:', data?.slice(0, 20));
+  
+  try {
+    if (typeof name !== 'string') {
+      throw new Error(`name is not a string: ${typeof name}`);
+    }
+    
+    const { subdomain, full } = normalizeEnsInput(name);
+    console.log('[resolveRecord] Normalized - subdomain:', subdomain, 'full:', full);
+    
+    if (!full.endsWith(ENS_SUFFIX)) {
+      throw new Error('Unsupported ENS domain');
+    }
 
-  const supabase = getSupabase();
-  const { data: agent, error } = await supabase
-    .from('agents')
-    .select(
+    const supabase = getSupabase();
+    const { data: agent, error } = await supabase
+      .from('agents')
+      .select(
+        `
+        *,
+        agent_wallets (wallet_address)
       `
-      *,
-      agent_wallets (wallet_address)
-    `
-    )
-    .eq('ens_name', subdomain)
-    .eq('status', 'active')
-    .single();
+      )
+      .eq('ens_name', subdomain)
+      .eq('status', 'active')
+      .single();
 
-  if (error || !agent) {
-    return {
-      result: encodeAbiParameters([{ type: 'bytes' }], ['0x']),
-      fullName: full,
-    };
-  }
+    console.log('[resolveRecord] Agent query error:', error?.message);
+    console.log('[resolveRecord] Agent found:', agent ? 'yes' : 'no');
 
-  const rawWalletAddress = getAgentWalletAddress(agent);
-  const walletAddress = normalizeWalletAddress(rawWalletAddress);
-  const safeWalletAddress = isAddress(walletAddress) ? walletAddress : ZERO_ADDRESS;
+    if (error || !agent) {
+      return {
+        result: encodeAbiParameters([{ type: 'bytes' }], ['0x']),
+        fullName: full,
+      };
+    }
+
+    console.log('[resolveRecord] agent.agent_wallets:', JSON.stringify(agent.agent_wallets));
+    const rawWalletAddress = getAgentWalletAddress(agent);
+    console.log('[resolveRecord] rawWalletAddress:', rawWalletAddress, 'type:', typeof rawWalletAddress);
+    const walletAddress = normalizeWalletAddress(rawWalletAddress);
+    console.log('[resolveRecord] walletAddress:', walletAddress);
+    const safeWalletAddress = isAddress(walletAddress) ? walletAddress : ZERO_ADDRESS;
+    console.log('[resolveRecord] safeWalletAddress:', safeWalletAddress);
   if (safeWalletAddress === ZERO_ADDRESS && rawWalletAddress) {
     console.warn(
       'Unexpected wallet address value:',
@@ -192,6 +209,15 @@ async function resolveRecord(name: string, data: `0x${string}`) {
     );
   }
 
+  console.log('[resolveRecord] Building text records with:', {
+    strategy: agent.strategy,
+    riskTolerance: agent.risk_tolerance,
+    preferredPools: agent.preferred_pools,
+    expertiseContext: typeof agent.expertise_context,
+    agentWallet: safeWalletAddress,
+    createdAt: agent.created_at,
+  });
+  
   const textRecords: Record<string, string> = buildEnsTextRecords({
     strategy: agent.strategy,
     riskTolerance: agent.risk_tolerance,
@@ -204,6 +230,7 @@ async function resolveRecord(name: string, data: `0x${string}`) {
       (agent as { character_plugins?: string[] | null }).character_plugins || undefined,
     uniswapHistory: (agent as { uniswap_history?: unknown }).uniswap_history,
   });
+  console.log('[resolveRecord] Text records built successfully');
 
   textRecords['eth.uniforum.owner'] = agent.owner_address;
   textRecords[ENS_TEXT_KEYS.AGENT_WALLET] = safeWalletAddress;
@@ -211,11 +238,16 @@ async function resolveRecord(name: string, data: `0x${string}`) {
     textRecords['eth.uniforum.currentForum'] = agent.current_forum_id;
   }
 
+  console.log('[resolveRecord] About to get selector from data');
   const selector = data.slice(0, 10).toLowerCase();
+  console.log('[resolveRecord] selector:', selector);
 
   if (selector === ADDR_SELECTOR) {
+    console.log('[resolveRecord] Processing addr() call');
     const decoded = decodeFunctionData({ abi: ADDR_ABI, data });
+    console.log('[resolveRecord] About to call namehash with full:', full, 'type:', typeof full);
     const expectedNode = namehash(full);
+    console.log('[resolveRecord] namehash result:', expectedNode);
     if (decoded.args?.[0] !== expectedNode) {
       return { result: encodeAbiParameters([{ type: 'bytes' }], ['0x']), fullName: full };
     }
@@ -288,6 +320,11 @@ async function resolveRecord(name: string, data: `0x${string}`) {
   }
 
   return { result: encodeAbiParameters([{ type: 'bytes' }], ['0x']), fullName: full };
+  } catch (err) {
+    console.error('[resolveRecord] Error:', err);
+    console.error('[resolveRecord] Stack:', err instanceof Error ? err.stack : 'no stack');
+    throw err;
+  }
 }
 
 /**
