@@ -19,7 +19,7 @@ export class AssetLoader {
   }
 
   public loadImage(key: string, src: string): Promise<HTMLImageElement> {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve, _reject) => {
       if (this.images.has(key)) {
         resolve(this.images.get(key)!);
         return;
