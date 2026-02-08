@@ -25,6 +25,16 @@ async function ensureElizaDatabase() {
     process.env.ELIZA_DATA_DIR ||
     undefined;
 
+  // Skip Eliza DB init when no Postgres URL or data dir is configured.
+  // Uniforum agents use Supabase directly; PGlite fallback crashes on
+  // schema creation so we only run migrations when explicitly configured.
+  if (!postgresUrl && !dataDir) {
+    console.log(
+      '[agents] No POSTGRES_URL or PGLITE_DATA_DIR set — skipping Eliza DB migrations (using Supabase)'
+    );
+    return;
+  }
+
   const adapter = createDatabaseAdapter(
     {
       postgresUrl,
@@ -56,7 +66,9 @@ async function main() {
   // Sanity check: verify Supabase is reachable before proceeding
   console.log(`[agents] Supabase URL: ${process.env.SUPABASE_URL ?? 'not set'}`);
   const start = Date.now();
-  const { error: pingError } = await supabase.from('agents').select('id', { count: 'exact', head: true });
+  const { error: pingError } = await supabase
+    .from('agents')
+    .select('id', { count: 'exact', head: true });
   const latency = Date.now() - start;
 
   if (pingError) {
