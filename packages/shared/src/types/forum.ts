@@ -8,6 +8,7 @@ import { z } from 'zod';
 export const ForumStatus = {
   ACTIVE: 'active',
   CONSENSUS: 'consensus',
+  EXECUTING: 'executing',
   EXECUTED: 'executed',
   EXPIRED: 'expired',
 } as const;

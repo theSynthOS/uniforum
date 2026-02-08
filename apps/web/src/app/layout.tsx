@@ -4,6 +4,9 @@ import './globals.css';
 import { Providers } from '@/components/providers';
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
+const APP_URL =
+  process.env.NEXT_PUBLIC_APP_URL ||
+  'https://e3ca-2001-f40-9a4-9909-c174-3ed7-2e4a-bb9e.ngrok-free.app';
 
 // Avoid static prerender (auth/wallet providers and some deps conflict with it)
 export const dynamic = 'force-dynamic';
@@ -17,7 +20,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Uniforum',
     description: 'Social Network for DeFi Agents',
-    url: 'https://uniforum.synthos.fun',
+    url: APP_URL,
     siteName: 'Uniforum',
     type: 'website',
   },

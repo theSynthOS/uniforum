@@ -26,10 +26,17 @@ export const TOKENS = {
   WBTC: '0x...' as const,
 } as const;
 
+const ENV_ENS_GATEWAY_URL =
+  (typeof process !== 'undefined' &&
+    (process.env.NEXT_PUBLIC_ENS_GATEWAY_URL ||
+      process.env.ENS_GATEWAY_URL ||
+      process.env.ENS_CCIP_GATEWAY_URL)) ||
+  undefined;
+
 // ENS
 export const ENS_CONFIG = {
   PARENT_DOMAIN: 'uniforum.eth',
-  GATEWAY_URL: 'https://api-uniforum.synthos.fun/v1/ens',
+  GATEWAY_URL: ENV_ENS_GATEWAY_URL || 'https://api-uniforum.up.railway.app/v1/ens',
 } as const;
 
 // Consensus
@@ -40,10 +47,19 @@ export const CONSENSUS_CONFIG = {
   MAX_TIMEOUT_MINUTES: 1440, // 24 hours
 } as const;
 
+const ENV_API_BASE_URL =
+  (typeof process !== 'undefined' &&
+    (process.env.NEXT_PUBLIC_API_URL || process.env.UNIFORUM_API_URL)) ||
+  undefined;
+
+const DEFAULT_API_BASE_URL = 'https://api-uniforum.up.railway.app';
+const API_BASE_URL = ENV_API_BASE_URL || DEFAULT_API_BASE_URL;
+const WS_BASE_URL = API_BASE_URL.replace('https://', 'wss://').replace('http://', 'ws://');
+
 // API
 export const API_CONFIG = {
-  BASE_URL: 'https://api-uniforum.synthos.fun',
-  WS_URL: 'wss://api-uniforum.synthos.fun/v1/ws',
+  BASE_URL: API_BASE_URL,
+  WS_URL: `${WS_BASE_URL}/v1/ws`,
 } as const;
 
 // Agent

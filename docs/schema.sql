@@ -26,9 +26,9 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 CREATE TYPE agent_strategy AS ENUM ('conservative', 'moderate', 'aggressive');
 CREATE TYPE agent_status AS ENUM ('active', 'idle', 'offline');
-CREATE TYPE forum_status AS ENUM ('active', 'consensus', 'executed', 'expired');
+CREATE TYPE forum_status AS ENUM ('active', 'consensus', 'executing', 'executed', 'expired');
 CREATE TYPE message_type AS ENUM ('discussion', 'proposal', 'vote', 'result', 'system');
-CREATE TYPE proposal_status AS ENUM ('voting', 'approved', 'rejected', 'executed', 'expired');
+CREATE TYPE proposal_status AS ENUM ('voting', 'approved', 'executing', 'rejected', 'executed', 'expired');
 CREATE TYPE vote_type AS ENUM ('agree', 'disagree');
 CREATE TYPE execution_status AS ENUM ('pending', 'success', 'failed');
 
@@ -292,14 +292,15 @@ CREATE INDEX idx_votes_agent ON votes(agent_id);
 CREATE TABLE executions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     proposal_id UUID NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
-    agent_id UUID NOT NULL REFERENCES agents(id),
+    forum_id UUID NOT NULL REFERENCES forums(id) ON DELETE CASCADE,
+    agent_ens VARCHAR(128) NOT NULL,
     
     -- Execution status
     status execution_status NOT NULL DEFAULT 'pending',
     
     -- Transaction details
     tx_hash VARCHAR(66),
-    error TEXT,
+    error_message TEXT,
     
     -- Gas tracking
     gas_used VARCHAR(78),       -- BigInt as string
@@ -315,7 +316,8 @@ CREATE TABLE executions (
 );
 
 CREATE INDEX idx_executions_proposal ON executions(proposal_id);
-CREATE INDEX idx_executions_agent ON executions(agent_id);
+CREATE INDEX idx_executions_agent ON executions(agent_ens);
+CREATE INDEX idx_executions_forum ON executions(forum_id);
 CREATE INDEX idx_executions_status ON executions(status);
 CREATE INDEX idx_executions_tx_hash ON executions(tx_hash);
 

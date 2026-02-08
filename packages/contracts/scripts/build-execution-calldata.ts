@@ -13,7 +13,8 @@ import type { ExecutionPayload } from '@uniforum/shared';
 import { buildV4SingleHopSwapCalldata } from '../src/uniswap/v4SwapCalldata';
 import {
   buildAddLiquidityCalldata as buildAddLiquidityEncoded,
-  buildRemoveLiquidityCalldata as buildRemoveLiquidityEncoded,
+  buildAddLiquidityFromDeltasCalldata as buildAddLiquidityFromDeltasEncoded,
+  buildDecreaseLiquidityUnlockData,
 } from '../src/uniswap/v4PositionCalldata';
 
 // Enriched execution payloads (params include v4 pool key etc. for encoding)
@@ -221,20 +222,27 @@ export function buildAddLiquidityCalldata(payload: ExecutionPayload): {
     tickSpacing: params.tickSpacing ?? 10,
     hooks: params.hooksAddress ?? '0x0000000000000000000000000000000000000000',
   };
-  const { commands, inputs } = buildAddLiquidityEncoded(
-    {
-      poolKey,
-      tickLower: params.tickLower ?? -887220,
-      tickUpper: params.tickUpper ?? 887220,
-      liquidity: params.liquidity ?? '0',
-      amount0Max: params.amount0 ?? '0',
-      amount1Max: params.amount1 ?? '0',
-      recipient: params.recipient ?? '0x0000000000000000000000000000000000000001',
-      hookData: (payload.hooks as { dynamicFee?: { hookData?: string } })?.dynamicFee?.hookData,
-      useNativeEth: false,
-    },
-    deadline
-  );
+  const isNativeEth =
+    poolKey.currency0.toLowerCase() === '0x0000000000000000000000000000000000000000';
+  const liquidityValue = params.liquidity ?? '0';
+  const useFromDeltas = liquidityValue === '0' || liquidityValue === '';
+
+  const mintParams = {
+    poolKey,
+    tickLower: params.tickLower ?? -887220,
+    tickUpper: params.tickUpper ?? 887220,
+    amount0Max: params.amount0 ?? '0',
+    amount1Max: params.amount1 ?? '0',
+    recipient: params.recipient ?? '0x0000000000000000000000000000000000000001',
+    hookData: (payload.hooks as { dynamicFee?: { hookData?: string } })?.dynamicFee?.hookData,
+    useNativeEth: isNativeEth,
+  };
+
+  // Use MINT_POSITION_FROM_DELTAS (0x05) when no liquidity specified — auto-calculates from amounts.
+  // Use MINT_POSITION (0x02) when explicit liquidity is provided.
+  const { commands, inputs } = useFromDeltas
+    ? buildAddLiquidityFromDeltasEncoded(mintParams, deadline)
+    : buildAddLiquidityEncoded({ ...mintParams, liquidity: liquidityValue }, deadline);
   const data = encodeFunctionData({
     abi: UNIVERSAL_ROUTER_ABI,
     functionName: 'execute',
@@ -242,11 +250,36 @@ export function buildAddLiquidityCalldata(payload: ExecutionPayload): {
   });
   const to =
     UNIVERSAL_ROUTER_BY_CHAIN[payload.chainId] ?? '0x0000000000000000000000000000000000000001';
-  return { data, to };
+  const value = isNativeEth ? BigInt(params.amount0 ?? '0') : undefined;
+  return { data, to, value };
 }
 
+/** PositionManager ABI (modifyLiquidities only) */
+export const POSITION_MANAGER_ABI = [
+  {
+    inputs: [
+      { name: 'unlockData', type: 'bytes' },
+      { name: 'deadline', type: 'uint256' },
+    ],
+    name: 'modifyLiquidities',
+    outputs: [],
+    stateMutability: 'payable',
+    type: 'function',
+  },
+] as const;
+
+/** PositionManager address per chain */
+export const POSITION_MANAGER_BY_CHAIN: Record<number, string> = {
+  1301: '0xf969aee60879c54baaed9f3ed26147db216fd664',
+  130: '0x4529a01c7a0410167c5740c487a8de60232617bf',
+};
+
 /**
- * Build Universal Router execute() calldata for remove liquidity (V4_POSITION_MANAGER_CALL 0x14).
+ * Build PositionManager.modifyLiquidities() calldata for remove liquidity (decrease + take).
+ *
+ * DECREASE_LIQUIDITY cannot go through the Universal Router's V4_POSITION_MANAGER_CALL (0x14)
+ * because the router's _checkV4PositionManagerCall() only allows MINT_POSITION actions.
+ * We must call PositionManager.modifyLiquidities() directly.
  */
 export function buildRemoveLiquidityCalldata(payload: ExecutionPayload): {
   data: `0x${string}`;
@@ -264,26 +297,23 @@ export function buildRemoveLiquidityCalldata(payload: ExecutionPayload): {
   const deadline = BigInt(
     (payload.params as { deadline?: number }).deadline ?? Math.floor(Date.now() / 1000) + 1800
   );
-  const { commands, inputs } = buildRemoveLiquidityEncoded(
-    {
-      tokenId: params.tokenId ?? '0',
-      liquidity: params.liquidityAmount ?? '0',
-      amount0Min: params.amount0Min ?? '0',
-      amount1Min: params.amount1Min ?? '0',
-      currency0: params.currency0 ?? '0x0000000000000000000000000000000000000000',
-      currency1: params.currency1 ?? '0x0000000000000000000000000000000000000000',
-      recipient: params.recipient ?? '0x0000000000000000000000000000000000000001',
-      hookData: '0x',
-    },
-    deadline
-  );
+  const unlockData = buildDecreaseLiquidityUnlockData({
+    tokenId: params.tokenId ?? '0',
+    liquidity: params.liquidityAmount ?? '0',
+    amount0Min: params.amount0Min ?? '0',
+    amount1Min: params.amount1Min ?? '0',
+    currency0: params.currency0 ?? '0x0000000000000000000000000000000000000000',
+    currency1: params.currency1 ?? '0x0000000000000000000000000000000000000000',
+    recipient: params.recipient ?? '0x0000000000000000000000000000000000000001',
+    hookData: '0x',
+  });
   const data = encodeFunctionData({
-    abi: UNIVERSAL_ROUTER_ABI,
-    functionName: 'execute',
-    args: [commands, inputs, deadline],
+    abi: POSITION_MANAGER_ABI,
+    functionName: 'modifyLiquidities',
+    args: [unlockData, deadline],
   });
   const to =
-    UNIVERSAL_ROUTER_BY_CHAIN[payload.chainId] ?? '0x0000000000000000000000000000000000000001';
+    POSITION_MANAGER_BY_CHAIN[payload.chainId] ?? '0x0000000000000000000000000000000000000001';
   return { data, to };
 }
 

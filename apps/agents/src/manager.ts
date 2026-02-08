@@ -12,6 +12,7 @@ import type { Forum, ForumMessage } from '@uniforum/shared/types/forum';
 import type { ExecutionPayload, Proposal } from '@uniforum/shared/types/proposal';
 import {
   buildDiscussionPrompt,
+  buildProposalPrompt,
   buildDebatePrompt,
   shouldParticipate,
   buildVoteEvaluationPrompt,
@@ -21,6 +22,7 @@ import {
 import { decryptPrivateKey, formatPrivateKey } from '@uniforum/contracts';
 import { createAgentCharacter, mergeUploadedCharacter } from './characters/template';
 import type { AgentInstance } from './types';
+import { getPoolSnapshot } from './lib/poolSnapshot';
 
 export class AgentManager {
   private agents: Map<string, AgentInstance> = new Map();
@@ -30,6 +32,7 @@ export class AgentManager {
   private executingProposals: Set<string> = new Set();
   private debateState: Map<string, { lastMessageId: string; roundsUsed: number; lastAt: number }> =
     new Map();
+  private proposalCooldown: Map<string, number> = new Map();
 
   constructor(supabase: SupabaseClient<Database>) {
     this.supabase = supabase;
@@ -106,6 +109,12 @@ export class AgentManager {
         : baseCharacter;
 
     const pluginList = character.plugins ?? [];
+    const disableNodePlugin =
+      process.env.ELIZA_DISABLE_NODE_PLUGIN === '1' ||
+      process.env.ELIZA_DISABLE_NODE_PLUGIN === 'true';
+    const resolvedPlugins = disableNodePlugin
+      ? pluginList.filter((plugin) => plugin !== '@elizaos/plugin-node')
+      : pluginList;
     if (!process.env.OPENAI_API_KEY) {
       console.warn(
         `[agents] OPENAI_API_KEY is not set. Agent ${ensName} will not be able to generate responses.`
@@ -116,7 +125,7 @@ export class AgentManager {
       [
         {
           character,
-          plugins: pluginList,
+          plugins: resolvedPlugins,
         },
       ],
       { autoStart: this.agentsStarted }
@@ -171,7 +180,9 @@ export class AgentManager {
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log(`[agents] Realtime agents-changes: ${status}`);
+      });
   }
 
   /**
@@ -194,7 +205,9 @@ export class AgentManager {
           await this.handleNewMessage(payload.new);
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log(`[agents] Realtime forum-messages: ${status}`);
+      });
 
     // Subscribe to new proposals
     this.supabase
@@ -226,7 +239,9 @@ export class AgentManager {
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log(`[agents] Realtime proposals: ${status}`);
+      });
   }
 
   /**
@@ -236,7 +251,7 @@ export class AgentManager {
     const { data: proposals, error } = await this.supabase
       .from('proposals')
       .select('*')
-      .eq('status', 'approved')
+      .in('status', ['approved', 'executing'])
       .limit(50);
 
     if (error) {
@@ -372,9 +387,11 @@ export class AgentManager {
       return;
     }
 
+    const poolSnapshot = await getPoolSnapshot(forum.pool);
     const prompt = buildDiscussionPrompt(agentContext, {
       forum,
       recentMessages,
+      poolSnapshot,
     });
 
     const response = await this.eliza.handleMessage(agent.agentId, {
@@ -401,7 +418,16 @@ export class AgentManager {
 
     console.log(`[agents] ${agent.ensName} posted a discussion reply`);
 
-    await this.handleDebateFollowUp(agent, message, forum, agentContext, recentMessages);
+    await this.maybeAutoPropose(agent, forum, agentContext, recentMessages, poolSnapshot);
+
+    await this.handleDebateFollowUp(
+      agent,
+      message,
+      forum,
+      agentContext,
+      recentMessages,
+      poolSnapshot
+    );
   }
 
   private async handleForumProposal(agent: AgentInstance, proposal: any): Promise<void> {
@@ -482,7 +508,8 @@ export class AgentManager {
     message: any,
     forum: Forum,
     agentContext: ReturnType<AgentManager['buildAgentDiscussionContext']>,
-    recentMessages: ForumMessage[]
+    recentMessages: ForumMessage[],
+    poolSnapshot?: Record<string, unknown> | null
   ): Promise<void> {
     const debateConfig = agentContext.debate;
     if (!debateConfig?.enabled) return;
@@ -516,6 +543,7 @@ export class AgentManager {
     const debatePrompt = buildDebatePrompt(agentContext, {
       forum,
       recentMessages,
+      poolSnapshot,
     });
 
     const response = await this.eliza.handleMessage(agent.agentId!, {
@@ -544,6 +572,95 @@ export class AgentManager {
     console.log(`[agents] ${agent.ensName} posted a debate follow-up`);
   }
 
+  private async maybeAutoPropose(
+    agent: AgentInstance,
+    forum: Forum,
+    agentContext: ReturnType<AgentManager['buildAgentDiscussionContext']>,
+    recentMessages: ForumMessage[],
+    poolSnapshot?: Record<string, unknown> | null
+  ): Promise<void> {
+    if (!agent.agentId) return;
+
+    const creatorEns = forum.creatorEnsName || '';
+    if (!creatorEns || creatorEns.toLowerCase() !== agent.ensName.toLowerCase()) {
+      return;
+    }
+
+    if (forum.status !== 'active') return;
+
+    const minMessages = parseInt(process.env.AUTO_PROPOSAL_MIN_MESSAGES || '3', 10) || 3;
+    if (recentMessages.length < minMessages) return;
+
+    const cooldownMs = parseInt(process.env.AUTO_PROPOSAL_COOLDOWN_MS || '120000', 10) || 120000;
+    const lastAt = this.proposalCooldown.get(forum.id) || 0;
+    if (Date.now() - lastAt < cooldownMs) return;
+
+    const { data: existingProposal } = await this.supabase
+      .from('proposals')
+      .select('id')
+      .eq('forum_id', forum.id)
+      .eq('status', 'voting')
+      .maybeSingle();
+
+    if (existingProposal?.id) return;
+
+    const prompt = buildProposalPrompt(agentContext, {
+      forum,
+      recentMessages,
+      poolSnapshot,
+    });
+
+    const response = await this.eliza.handleMessage(agent.agentId, {
+      entityId: forum.id,
+      roomId: forum.id,
+      content: {
+        text: prompt,
+        source: 'uniforum',
+      },
+    });
+
+    const text = response.processing?.text?.trim();
+    if (!text) return;
+
+    const proposalPayload = parseProposalJson(text);
+    if (!proposalPayload) return;
+
+    const { action, params, hooks, description } = proposalPayload;
+    const allowedActions = new Set(['swap', 'addLiquidity', 'removeLiquidity', 'limitOrder']);
+    if (!action || !allowedActions.has(action)) return;
+    if (!params || typeof params !== 'object') return;
+
+    const { data: proposal, error } = await (this.supabase as any)
+      .from('proposals')
+      .insert({
+        forum_id: forum.id,
+        proposer_ens: agent.ensName,
+        action,
+        params,
+        hooks: hooks || null,
+        description: description || null,
+        status: 'voting',
+      })
+      .select()
+      .single();
+
+    if (error || !proposal) {
+      console.error('[agents] Failed to create auto proposal:', error);
+      return;
+    }
+
+    await this.supabase.from('messages').insert({
+      forum_id: forum.id,
+      agent_id: agent.id,
+      content: `Proposed: ${action} - ${JSON.stringify(params)}`,
+      type: 'proposal',
+      metadata: { proposalId: proposal.id },
+    });
+
+    this.proposalCooldown.set(forum.id, Date.now());
+    console.log(`[agents] ${agent.ensName} auto-proposed action ${action}`);
+  }
+
   private async handleApprovedProposal(proposal: any): Promise<void> {
     const proposalId = proposal?.id;
     if (!proposalId) return;
@@ -556,6 +673,17 @@ export class AgentManager {
       if (!executorEns) {
         console.warn(`[agents] Proposal ${proposalId} missing executor ENS, skipping execution`);
         return;
+      }
+
+      const lockAcquired = await this.acquireExecutionLock(proposalId, proposal.status);
+      if (!lockAcquired) {
+        const pending = await this.getPendingExecution(proposalId, executorEns);
+        if (!pending) {
+          const anyExecution = await this.hasAnyExecutionRecord(proposalId);
+          if (anyExecution) {
+            return;
+          }
+        }
       }
 
       const executorAgent = this.getManagedAgentByEns(executorEns);
@@ -608,9 +736,55 @@ export class AgentManager {
     }
   }
 
+  private async acquireExecutionLock(proposalId: string, status?: string): Promise<boolean> {
+    if (status && status === 'executing') {
+      return false;
+    }
+
+    const { data, error } = await (this.supabase as any)
+      .from('proposals')
+      .update({ status: 'executing' })
+      .eq('id', proposalId)
+      .eq('status', 'approved')
+      .select('id')
+      .limit(1);
+
+    if (error) {
+      console.error('[agents] Failed to acquire execution lock:', error);
+      return false;
+    }
+
+    return Array.isArray(data) && data.length > 0;
+  }
+
+  private async getPendingExecution(
+    proposalId: string,
+    executorEns: string
+  ): Promise<{ id: string } | null> {
+    const { data } = await (this.supabase as any)
+      .from('executions')
+      .select('id, status')
+      .eq('proposal_id', proposalId)
+      .eq('agent_ens', executorEns)
+      .maybeSingle();
+
+    if (!data?.id) return null;
+    if (data.status && data.status !== 'pending') return null;
+    return data as { id: string };
+  }
+
+  private async hasAnyExecutionRecord(proposalId: string): Promise<boolean> {
+    const { data } = await (this.supabase as any)
+      .from('executions')
+      .select('id')
+      .eq('proposal_id', proposalId)
+      .limit(1);
+    return Array.isArray(data) && data.length > 0;
+  }
+
   private async resolveExecutorEns(proposal: any): Promise<string | null> {
-    if (proposal.creator_agent_ens) return proposal.creator_agent_ens;
-    if (proposal.proposer_ens) return proposal.proposer_ens;
+    if (proposal.creator_agent_ens) return this.normalizeEnsName(proposal.creator_agent_ens);
+    if (proposal.proposer_ens) return this.normalizeEnsName(proposal.proposer_ens);
 
     if (proposal.creator_agent_id) {
       const { data: agent } = await this.supabase
@@ -618,27 +792,25 @@ export class AgentManager {
         .select('ens_name')
         .eq('id', proposal.creator_agent_id)
         .single();
-      if (agent?.ens_name) return agent.ens_name;
+      if (agent?.ens_name) return this.normalizeEnsName(agent.ens_name);
     }
 
     if (proposal.forum_id) {
       const { data: forum } = await this.supabase
         .from('forums')
-        .select('creator_agent_ens, creator_agent_id')
+        .select('creator_agent_id')
         .eq('id', proposal.forum_id)
         .single();
-
-      const forumEns = (forum as any)?.creator_agent_ens;
-      if (forumEns) return forumEns;
 
       const forumCreatorId = (forum as any)?.creator_agent_id;
       if (forumCreatorId) {
         const { data: agent } = await this.supabase
           .from('agents')
-          .select('ens_name')
+          .select('ens_name, full_ens_name')
           .eq('id', forumCreatorId)
           .single();
-        if (agent?.ens_name) return agent.ens_name;
+        const ensName = agent?.full_ens_name || agent?.ens_name;
+        if (ensName) return this.normalizeEnsName(ensName);
       }
     }
 
@@ -716,7 +888,7 @@ export class AgentManager {
       process.env.NEXT_PUBLIC_API_URL;
     if (env) return env.replace(/\/$/, '');
     if (process.env.NODE_ENV === 'development') return 'http://localhost:3001';
-    return 'https://api-uniforum.synthos.fun';
+    return 'https://api-uniforum.up.railway.app';
   }
 
   private buildProposalFromPayload(payload: ExecutionPayload): Proposal {
@@ -783,10 +955,21 @@ export class AgentManager {
   private async fetchForum(forumId: string): Promise<Forum | null> {
     const { data: forum } = await this.supabase
       .from('forums')
-      .select('*, creator_agent_ens')
+      .select('*')
       .eq('id', forumId)
       .single();
     if (!forum) return null;
+
+    const creatorEnsName = await (async () => {
+      if (!forum.creator_agent_id) return '';
+      const { data: agent } = await this.supabase
+        .from('agents')
+        .select('ens_name, full_ens_name')
+        .eq('id', forum.creator_agent_id)
+        .single();
+      const ensName = agent?.full_ens_name || agent?.ens_name || '';
+      return ensName ? this.normalizeEnsName(ensName) : '';
+    })();
 
     return {
       id: forum.id,
@@ -794,7 +977,7 @@ export class AgentManager {
       goal: forum.goal,
       pool: forum.pool ?? undefined,
       creatorAgentId: forum.creator_agent_id,
-      creatorEnsName: (forum as any).creator_agent_ens || '',
+      creatorEnsName,
       quorumThreshold: forum.quorum_threshold,
       minParticipants: forum.min_participants,
       timeoutMinutes: forum.timeout_minutes,
@@ -868,7 +1051,7 @@ export class AgentManager {
       id: proposal.id,
       forumId: proposal.forum_id,
       creatorAgentId: proposal.creator_agent_id,
-      creatorEnsName: '',
+      creatorEnsName: proposal.creator_agent_ens || proposal.proposer_ens || '',
       description: proposal.description ?? undefined,
       action: proposal.action,
       params: proposal.params,
@@ -880,5 +1063,34 @@ export class AgentManager {
       expiresAt: proposal.expires_at,
       resolvedAt: proposal.resolved_at ?? undefined,
     };
+  }
+}
+
+function parseProposalJson(text: string): {
+  action?: string;
+  params?: Record<string, unknown>;
+  hooks?: Record<string, unknown>;
+  description?: string;
+} | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  const direct = safeParseJson(trimmed);
+  if (direct) return direct;
+
+  const match = trimmed.match(/\{[\s\S]*\}/);
+  if (match) {
+    const parsed = safeParseJson(match[0]);
+    if (parsed) return parsed;
+  }
+
+  return null;
+}
+
+function safeParseJson(raw: string): any | null {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
   }
 }

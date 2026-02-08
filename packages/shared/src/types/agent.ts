@@ -34,6 +34,21 @@ export const createAgentSchema = z.object({
   preferredPools: z.array(z.string()).min(1),
   expertiseContext: z.string().max(2000).optional(),
   avatarUrl: z.string().url().optional(),
+  rulesOfThumb: z.array(z.string().min(3)).min(1),
+  constraints: z.record(z.any()).refine((value) => Object.keys(value).length > 0, {
+    message: 'constraints must include at least one field',
+  }),
+  objectiveWeights: z.record(z.number()).refine((value) => Object.keys(value).length > 0, {
+    message: 'objectiveWeights must include at least one field',
+  }),
+  debate: z
+    .object({
+      enabled: z.boolean().optional(),
+      rounds: z.number().min(1).max(3).optional(),
+      delayMs: z.number().min(250).max(10000).optional(),
+    })
+    .optional(),
+  temperatureDelta: z.number().min(-0.2).max(0.2).optional(),
 });
 
 export type CreateAgentInput = z.infer<typeof createAgentSchema>;

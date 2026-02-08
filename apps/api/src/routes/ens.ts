@@ -8,6 +8,7 @@ import {
   encodeFunctionResult,
   encodePacked,
   keccak256,
+  isAddress,
   namehash,
   toBytes,
   toHex,
@@ -17,6 +18,11 @@ import { secp256k1 } from '@noble/curves/secp256k1';
 export const ensRoutes = new Hono();
 
 const ENS_SUFFIX = `.${ENS_CONFIG.PARENT_DOMAIN}`;
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+const APP_URL =
+  process.env.NEXT_PUBLIC_APP_URL ||
+  process.env.APP_URL ||
+  'https://e3ca-2001-f40-9a4-9909-c174-3ed7-2e4a-bb9e.ngrok-free.app';
 
 function normalizeEnsInput(input: string) {
   const trimmed = input.trim().toLowerCase();
@@ -133,6 +139,22 @@ function signHash(hash: `0x${string}`, privateKey: `0x${string}`): `0x${string}`
   return `0x${r}${s}${v.toString(16).padStart(2, '0')}`;
 }
 
+function getAgentWalletAddress(agent: unknown): string | undefined {
+  if (!agent || typeof agent !== 'object') return undefined;
+  const wallets = (agent as { agent_wallets?: unknown }).agent_wallets;
+  if (!wallets) return undefined;
+  if (Array.isArray(wallets)) {
+    const first = wallets[0] as { wallet_address?: string } | undefined;
+    return first?.wallet_address;
+  }
+  return (wallets as { wallet_address?: string }).wallet_address;
+}
+
+function normalizeWalletAddress(value: unknown): string {
+  if (typeof value !== 'string') return ZERO_ADDRESS;
+  return isAddress(value) ? value : ZERO_ADDRESS;
+}  
+
 async function resolveRecord(name: string, data: `0x${string}`) {
   const { subdomain, full } = normalizeEnsInput(name);
   if (!full.endsWith(ENS_SUFFIX)) {
@@ -159,19 +181,32 @@ async function resolveRecord(name: string, data: `0x${string}`) {
     };
   }
 
-  const walletAddress = agent.agent_wallets?.[0]?.wallet_address || '0x0000000000000000000000000000000000000000';
+  const rawWalletAddress = getAgentWalletAddress(agent);
+  const walletAddress = normalizeWalletAddress(rawWalletAddress);
+  const safeWalletAddress = isAddress(walletAddress) ? walletAddress : ZERO_ADDRESS;
+  if (safeWalletAddress === ZERO_ADDRESS && rawWalletAddress) {
+    console.warn(
+      'Unexpected wallet address value:',
+      typeof rawWalletAddress,
+      rawWalletAddress
+    );
+  }
 
   const textRecords: Record<string, string> = buildEnsTextRecords({
     strategy: agent.strategy,
     riskTolerance: agent.risk_tolerance,
     preferredPools: agent.preferred_pools,
     expertiseContext: agent.expertise_context || '',
-    agentWallet: walletAddress,
+    agentWallet: safeWalletAddress,
     createdAt: new Date(agent.created_at),
+    characterConfig: (agent as { character_config?: Record<string, unknown> }).character_config,
+    characterPlugins:
+      (agent as { character_plugins?: string[] | null }).character_plugins || undefined,
+    uniswapHistory: (agent as { uniswap_history?: unknown }).uniswap_history,
   });
 
   textRecords['eth.uniforum.owner'] = agent.owner_address;
-  textRecords[ENS_TEXT_KEYS.AGENT_WALLET] = walletAddress;
+  textRecords[ENS_TEXT_KEYS.AGENT_WALLET] = safeWalletAddress;
   if (agent.current_forum_id) {
     textRecords['eth.uniforum.currentForum'] = agent.current_forum_id;
   }
@@ -184,10 +219,13 @@ async function resolveRecord(name: string, data: `0x${string}`) {
     if (decoded.args?.[0] !== expectedNode) {
       return { result: encodeAbiParameters([{ type: 'bytes' }], ['0x']), fullName: full };
     }
+    if (!isAddress(safeWalletAddress)) {
+      return { result: encodeAbiParameters([{ type: 'bytes' }], ['0x']), fullName: full };
+    }
     const result = encodeFunctionResult({
       abi: ADDR_ABI,
       functionName: 'addr',
-      result: [walletAddress as `0x${string}`],
+      result: [safeWalletAddress as `0x${string}`],
     });
     return { result, fullName: full };
   }
@@ -200,7 +238,7 @@ async function resolveRecord(name: string, data: `0x${string}`) {
       const empty = encodeAbiParameters([{ type: 'bytes' }], ['0x']);
       return { result: empty, fullName: full };
     }
-    const addressBytes = toHex(toBytes(walletAddress));
+    const addressBytes = toHex(toBytes(safeWalletAddress));
     const result = encodeFunctionResult({
       abi: ADDR_COIN_ABI,
       functionName: 'addr',
@@ -295,19 +333,23 @@ ensRoutes.get('/resolve/:name', async (c) => {
     );
   }
 
-  const walletAddress = agent.agent_wallets?.[0]?.wallet_address;
+  const walletAddress = normalizeWalletAddress(getAgentWalletAddress(agent));
 
   const textRecords: Record<string, string> = buildEnsTextRecords({
     strategy: agent.strategy,
     riskTolerance: agent.risk_tolerance,
     preferredPools: agent.preferred_pools,
     expertiseContext: agent.expertise_context || '',
-    agentWallet: walletAddress || '',
+    agentWallet: walletAddress,
     createdAt: new Date(agent.created_at),
+    characterConfig: (agent as { character_config?: Record<string, unknown> }).character_config,
+    characterPlugins:
+      (agent as { character_plugins?: string[] | null }).character_plugins || undefined,
+    uniswapHistory: (agent as { uniswap_history?: unknown }).uniswap_history,
   });
 
   textRecords['eth.uniforum.owner'] = agent.owner_address;
-  textRecords[ENS_TEXT_KEYS.AGENT_WALLET] = walletAddress || '';
+  textRecords[ENS_TEXT_KEYS.AGENT_WALLET] = walletAddress;
 
   // Add optional records if present
   if (agent.current_forum_id) {
@@ -373,7 +415,7 @@ ensRoutes.get('/text/:name/:key', async (c) => {
     return c.json({ error: 'Name not found' }, 404);
   }
 
-  const walletAddress = agent.agent_wallets?.[0]?.wallet_address;
+  const walletAddress = normalizeWalletAddress(getAgentWalletAddress(agent));
 
   // Map key to value
   const keyMap: Record<string, string | null> = {
@@ -382,15 +424,19 @@ ensRoutes.get('/text/:name/:key', async (c) => {
       riskTolerance: agent.risk_tolerance,
       preferredPools: agent.preferred_pools,
       expertiseContext: agent.expertise_context || '',
-      agentWallet: walletAddress || '',
+      agentWallet: walletAddress,
       createdAt: new Date(agent.created_at),
+      characterConfig: (agent as { character_config?: Record<string, unknown> }).character_config,
+      characterPlugins:
+        (agent as { character_plugins?: string[] | null }).character_plugins || undefined,
+      uniswapHistory: (agent as { uniswap_history?: unknown }).uniswap_history,
     }),
     'eth.uniforum.owner': agent.owner_address,
     'eth.uniforum.currentForum': agent.current_forum_id,
     // Standard ENS records
     avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${subdomain}`,
     description: `Uniforum agent with ${agent.strategy} strategy`,
-    url: `https://uniforum.synthos.fun/agents/${ensName}`,
+    url: `${APP_URL.replace(/\/$/, '')}/agents/${ensName}`,
   };
 
   const value = keyMap[key];
@@ -430,66 +476,92 @@ ensRoutes.get('/address/:name', async (c) => {
     return c.json({ error: 'Name not found' }, 404);
   }
 
+  const walletAddress = normalizeWalletAddress(getAgentWalletAddress(agent));
   return c.json({
     name: ensName,
-    address: agent.agent_wallets?.[0]?.wallet_address || null,
+    address: walletAddress,
   });
 });
 
-async function handleCcipRequest(
-  c: Context,
-  sender: string,
-  data: string
-) {
-  const resolverAddress = process.env.ENS_OFFCHAIN_RESOLVER_ADDRESS;
-  const signerKey = process.env.ENS_CCIP_SIGNER_PRIVATE_KEY;
-
-  if (!resolverAddress || !signerKey) {
-    return c.json({ error: 'CCIP signer configuration missing' }, 500);
-  }
-
-  const normalizedResolver = resolverAddress.startsWith('0x')
-    ? resolverAddress
-    : `0x${resolverAddress}`;
-  const normalizedSigner = signerKey.startsWith('0x') ? signerKey : `0x${signerKey}`;
-
-  if (normalizedResolver.toLowerCase() !== sender.toLowerCase()) {
-    return c.json({ error: 'Resolver address mismatch' }, 400);
-  }
-
-  const calldata = data as `0x${string}`;
-  let decoded;
+async function handleCcipRequest(c: Context, sender: string, data: string) {
   try {
-    decoded = decodeFunctionData({ abi: RESOLVE_ABI, data: calldata });
-  } catch {
-    return c.json({ error: 'Invalid resolve calldata' }, 400);
+    const resolverAddress = process.env.ENS_OFFCHAIN_RESOLVER_ADDRESS;
+    const signerKey = process.env.ENS_CCIP_SIGNER_PRIVATE_KEY;
+
+    if (!resolverAddress || !signerKey) {
+      return c.json({ error: 'CCIP signer configuration missing' }, 500);
+    }
+
+    const senderValue = Array.isArray(sender) ? sender[0] : sender;
+    const dataValue = Array.isArray(data) ? data[0] : data;
+
+    console.log('CCIP request from sender:', senderValue);
+    console.log('CCIP request data:', dataValue);
+    console.log('Using resolver address:', resolverAddress);
+
+    if (typeof senderValue !== 'string' || typeof dataValue !== 'string') {
+      return c.json({ error: 'Invalid sender or data type' }, 400);
+    }
+
+    if (!senderValue.startsWith('0x')) {
+      return c.json({ error: 'Invalid sender address' }, 400);
+    }
+
+    const normalizedResolver = resolverAddress.startsWith('0x')
+      ? resolverAddress
+      : `0x${resolverAddress}`;
+    const normalizedSigner = signerKey.startsWith('0x') ? signerKey : `0x${signerKey}`;
+
+    if (normalizedResolver.toLowerCase() !== senderValue.toLowerCase()) {
+      return c.json({ error: 'Resolver address mismatch' }, 400);
+    }
+
+    if (!dataValue.startsWith('0x')) {
+      return c.json({ error: 'Invalid resolve calldata' }, 400);
+    }
+
+    const calldata = dataValue as `0x${string}`;
+    let decoded;
+    try {
+      decoded = decodeFunctionData({ abi: RESOLVE_ABI, data: calldata });
+    } catch {
+      return c.json({ error: 'Invalid resolve calldata' }, 400);
+    }
+
+    const nameBytes = decoded.args?.[0];
+    const recordData = decoded.args?.[1];
+
+    if (typeof nameBytes !== 'string' || typeof recordData !== 'string') {
+      return c.json({ error: 'Invalid resolve args' }, 400);
+    }
+
+    const dnsName = decodeDnsName(toBytes(nameBytes)).toLowerCase();
+    const { result } = await resolveRecord(dnsName, recordData as `0x${string}`);
+    const expires = BigInt(Math.floor(Date.now() / 1000) + 300);
+
+    const signatureHash = buildSignatureHash(
+      normalizedResolver as `0x${string}`,
+      expires,
+      calldata,
+      result
+    );
+
+    const signature = signHash(signatureHash, normalizedSigner as `0x${string}`);
+    const response = encodeAbiParameters(
+      [
+        { name: 'result', type: 'bytes' },
+        { name: 'expires', type: 'uint64' },
+        { name: 'sig', type: 'bytes' },
+      ],
+      [result, expires, signature]
+    );
+
+    return c.json({ data: response });
+  } catch (error) {
+    console.error('[ccip] Gateway error:', error);
+    const message = error instanceof Error ? error.message : String(error);
+    return c.json({ error: 'Internal Server Error', message }, 500);
   }
-
-  const nameBytes = decoded.args?.[0] as `0x${string}`;
-  const recordData = decoded.args?.[1] as `0x${string}`;
-  const dnsName = decodeDnsName(toBytes(nameBytes)).toLowerCase();
-
-  const { result } = await resolveRecord(dnsName, recordData);
-  const expires = BigInt(Math.floor(Date.now() / 1000) + 300);
-
-  const signatureHash = buildSignatureHash(
-    normalizedResolver as `0x${string}`,
-    expires,
-    calldata,
-    result
-  );
-
-  const signature = signHash(signatureHash, normalizedSigner as `0x${string}`);
-  const response = encodeAbiParameters(
-    [
-      { name: 'result', type: 'bytes' },
-      { name: 'expires', type: 'uint64' },
-      { name: 'sig', type: 'bytes' },
-    ],
-    [result, expires, signature]
-  );
-
-  return c.json({ data: response });
 }
 
 // GET /ens/list - List all registered names (admin/debug endpoint)
@@ -501,7 +573,11 @@ ensRoutes.get('/list', async (c) => {
   const limitNum = Math.min(parseInt(limit || '50', 10), 100);
   const offsetNum = parseInt(offset || '0', 10);
 
-  const { data: agents, error, count } = await supabase
+  const {
+    data: agents,
+    error,
+    count,
+  } = await supabase
     .from('agents')
     .select('ens_name, status, created_at', { count: 'exact' })
     .eq('status', 'active')

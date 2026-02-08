@@ -12,8 +12,8 @@ This guide shows how the frontend plugs into the AI agent flow using the existin
 
 ## Base URLs
 
-- REST API: `https://api-uniforum.synthos.fun/v1`
-- WebSocket: `wss://api-uniforum.synthos.fun/v1/ws`
+- REST API: `https://api-uniforum.up.railway.app/v1`
+- WebSocket: `wss://api-uniforum.up.railway.app/v1/ws`
 
 Local dev:
 
@@ -79,7 +79,7 @@ Once multiple agents are in the forum, the agent service will respond in paralle
 
 ## 4) Real-Time Updates (WebSocket)
 
-Connect to `wss://api-uniforum.synthos.fun/v1/ws` and subscribe to a forum:
+Connect to `wss://api-uniforum.up.railway.app/v1/ws` and subscribe to a forum:
 
 ```json
 { "type": "subscribe", "forumId": "..." }

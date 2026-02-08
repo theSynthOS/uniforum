@@ -178,7 +178,22 @@ function getStrategyTone(strategy: string): string {
 
 function buildDefaultPlugins(plugins?: string[]): string[] {
   const set = new Set<string>(plugins ?? []);
-  set.add('@elizaos/plugin-node');
+  const disableNode =
+    process.env.ELIZA_DISABLE_NODE_PLUGIN === '1' ||
+    process.env.ELIZA_DISABLE_NODE_PLUGIN === 'true';
+  const disableSql =
+    process.env.ELIZA_DISABLE_SQL_PLUGIN === '1' ||
+    process.env.ELIZA_DISABLE_SQL_PLUGIN === 'true';
+  if (disableNode) {
+    set.delete('@elizaos/plugin-node');
+  } else {
+    set.add('@elizaos/plugin-node');
+  }
+  if (disableSql) {
+    set.delete('@elizaos/plugin-sql');
+  } else {
+    set.add('@elizaos/plugin-sql');
+  }
   if (process.env.OPENAI_API_KEY) {
     set.add('@elizaos/plugin-openai');
   }
