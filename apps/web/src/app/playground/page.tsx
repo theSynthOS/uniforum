@@ -97,11 +97,13 @@ export default function PlaygroundPage() {
       void refreshMessages();
     }, 3000);
     return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [forumId, autoRefresh]);
 
   useEffect(() => {
     if (!forumId) return;
     void refreshForum();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [forumId]);
 
   const ensureToken = async () => {
