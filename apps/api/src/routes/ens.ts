@@ -129,13 +129,11 @@ function buildSignatureHash(
 }
 
 function signHash(hash: `0x${string}`, privateKey: `0x${string}`): `0x${string}` {
-  const [sig, recovery] = secp256k1.sign(toBytes(hash), toBytes(privateKey), {
-    der: false,
-    recovered: true,
-  });
-  const r = toHex(sig.slice(0, 32)).slice(2).padStart(64, '0');
-  const s = toHex(sig.slice(32, 64)).slice(2).padStart(64, '0');
-  const v = (recovery ?? 0) + 27;
+  const sig = secp256k1.sign(toBytes(hash), toBytes(privateKey));
+  const compact = sig.toCompactRawBytes();
+  const r = toHex(compact.slice(0, 32)).slice(2).padStart(64, '0');
+  const s = toHex(compact.slice(32, 64)).slice(2).padStart(64, '0');
+  const v = (sig.recovery ?? 0) + 27;
   return `0x${r}${s}${v.toString(16).padStart(2, '0')}`;
 }
 
@@ -151,6 +149,7 @@ function getAgentWalletAddress(agent: unknown): string | undefined {
 }
 
 function normalizeWalletAddress(value: unknown): string {
+    console.log('normalizeWalletAddress', value);
   if (typeof value !== 'string') return ZERO_ADDRESS;
   return isAddress(value) ? value : ZERO_ADDRESS;
 }  

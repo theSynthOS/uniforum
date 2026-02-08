@@ -39,6 +39,41 @@ export class AgentManager {
     this.eliza = new ElizaOS();
   }
 
+  private extractResponseText(
+    result: Awaited<ReturnType<ElizaOS['handleMessage']>> | null | undefined
+  ): string | null {
+    const direct = result?.processing?.responseContent?.text;
+    if (typeof direct === 'string' && direct.trim()) {
+      return direct.trim();
+    }
+
+    const fromMessages = result?.processing?.responseMessages?.find(
+      (message) => typeof message?.content?.text === 'string' && message.content.text.trim()
+    )?.content?.text;
+
+    if (typeof fromMessages === 'string' && fromMessages.trim()) {
+      return fromMessages.trim();
+    }
+
+    return null;
+  }
+
+  private async insertForumMessage(payload: {
+    forum_id: string;
+    agent_id: string;
+    content: string;
+    type: 'discussion' | 'proposal' | 'vote' | 'result';
+    metadata?: Record<string, unknown> | null;
+  }): Promise<boolean> {
+    const { error } = await this.supabase.from('messages').insert(payload);
+    if (error) {
+      console.error('[agents] Failed to save message:', error);
+      return false;
+    }
+
+    return true;
+  }
+
   /**
    * Load all active agents from the database
    */
@@ -403,10 +438,10 @@ export class AgentManager {
       },
     });
 
-    const text = response.processing?.text?.trim();
+    const text = this.extractResponseText(response);
     if (!text) return;
 
-    await this.supabase.from('messages').insert({
+    const saved = await this.insertForumMessage({
       forum_id: message.forum_id,
       agent_id: agent.id,
       content: text,
@@ -416,7 +451,9 @@ export class AgentManager {
       },
     });
 
-    console.log(`[agents] ${agent.ensName} posted a discussion reply`);
+    if (saved) {
+      console.log(`[agents] ${agent.ensName} posted a discussion reply`);
+    }
 
     await this.maybeAutoPropose(agent, forum, agentContext, recentMessages, poolSnapshot);
 
@@ -466,7 +503,7 @@ export class AgentManager {
         },
       });
 
-      const text = response.processing?.text?.trim() || '';
+      const text = this.extractResponseText(response) || '';
       const lowered = text.toLowerCase();
       if (lowered.startsWith('agree')) {
         vote = 'agree';
@@ -489,7 +526,7 @@ export class AgentManager {
       reason,
     });
 
-    await this.supabase.from('messages').insert({
+    const saved = await this.insertForumMessage({
       forum_id: proposal.forum_id,
       agent_id: agent.id,
       content: `${vote.toUpperCase()}: ${reason || 'No reason provided.'}`,
@@ -500,7 +537,9 @@ export class AgentManager {
       },
     });
 
-    console.log(`[agents] ${agent.ensName} voted ${vote} on proposal ${proposal.id}`);
+    if (saved) {
+      console.log(`[agents] ${agent.ensName} voted ${vote} on proposal ${proposal.id}`);
+    }
   }
 
   private async handleDebateFollowUp(
@@ -555,10 +594,10 @@ export class AgentManager {
       },
     });
 
-    const text = response.processing?.text?.trim();
+    const text = this.extractResponseText(response);
     if (!text) return;
 
-    await this.supabase.from('messages').insert({
+    const saved = await this.insertForumMessage({
       forum_id: message.forum_id,
       agent_id: agent.id,
       content: text,
@@ -569,7 +608,9 @@ export class AgentManager {
       },
     });
 
-    console.log(`[agents] ${agent.ensName} posted a debate follow-up`);
+    if (saved) {
+      console.log(`[agents] ${agent.ensName} posted a debate follow-up`);
+    }
   }
 
   private async maybeAutoPropose(
@@ -619,7 +660,7 @@ export class AgentManager {
       },
     });
 
-    const text = response.processing?.text?.trim();
+    const text = this.extractResponseText(response);
     if (!text) return;
 
     const proposalPayload = parseProposalJson(text);
@@ -649,7 +690,7 @@ export class AgentManager {
       return;
     }
 
-    await this.supabase.from('messages').insert({
+    const saved = await this.insertForumMessage({
       forum_id: forum.id,
       agent_id: agent.id,
       content: `Proposed: ${action} - ${JSON.stringify(params)}`,
@@ -657,8 +698,10 @@ export class AgentManager {
       metadata: { proposalId: proposal.id },
     });
 
-    this.proposalCooldown.set(forum.id, Date.now());
-    console.log(`[agents] ${agent.ensName} auto-proposed action ${action}`);
+    if (saved) {
+      this.proposalCooldown.set(forum.id, Date.now());
+      console.log(`[agents] ${agent.ensName} auto-proposed action ${action}`);
+    }
   }
 
   private async handleApprovedProposal(proposal: any): Promise<void> {
@@ -716,7 +759,7 @@ export class AgentManager {
         await this.reportExecutionResult(executionRecord.id, {
           status: 'failed',
           error: 'Missing executor private key',
-        });
+        }, payload.chainId);
         return;
       }
 
@@ -728,7 +771,7 @@ export class AgentManager {
         chainId: payload.chainId,
       });
 
-      await this.reportExecutionResult(executionRecord.id, result);
+      await this.reportExecutionResult(executionRecord.id, result, payload.chainId);
     } catch (error) {
       console.error('[agents] Execution worker error:', error);
     } finally {
@@ -933,7 +976,8 @@ export class AgentManager {
 
   private async reportExecutionResult(
     executionId: string,
-    result: { status: 'success' | 'failed'; txHash?: string; error?: string }
+    result: { status: 'success' | 'failed'; txHash?: string; error?: string },
+    chainId?: number
   ) {
     const baseUrl = this.getApiBaseUrl();
     const response = await fetch(`${baseUrl}/v1/executions/${executionId}`, {
@@ -943,6 +987,7 @@ export class AgentManager {
         status: result.status,
         txHash: result.txHash,
         errorMessage: result.error,
+        chainId,
       }),
     });
 
