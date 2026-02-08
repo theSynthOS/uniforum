@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { CanvasManager } from './core/CanvasManager';
 import { Agent } from './core/types';
 import { ForumMessages, ForumTopic } from './ForumMessages';
-import { agents as agentsApi, Agent as ApiAgent, forums as forumsApi, Forum } from '@/lib/api';
+import { agents as agentsApi, Agent as ApiAgent, forums as forumsApi } from '@/lib/api';
 
 import { getRandomWalkablePosition, findPath, getNearestWalkablePosition } from './assets/mapData';
 
@@ -280,7 +280,7 @@ export const UniforumCanvas = () => {
     
     // Forum data - fetch first since agents need it for clustering
     const [forumTopics, setForumTopics] = useState<ForumTopic[]>([]);
-    const [isLoadingForums, setIsLoadingForums] = useState(true);
+    const [, setIsLoadingForums] = useState(true);
     
     // Fetch real forums from API
     useEffect(() => {
@@ -341,8 +341,8 @@ export const UniforumCanvas = () => {
 
         const manager = new CanvasManager(
             canvasRef.current, 
-            (event) => {
-                // console.log('Interaction:', event);
+            (_event) => {
+                // console.log('Interaction:', _event);
             },
             (updatedAgents) => {
                 // Sync status changes from CanvasManager back to React
@@ -382,7 +382,8 @@ export const UniforumCanvas = () => {
         if (managerRef.current) {
              managerRef.current.resize(928, 640);
         }
-    }, [managerRef.current]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // Pan & Zoom Handlers - DISABLED
     const handleMouseDown = (e: React.MouseEvent) => {
