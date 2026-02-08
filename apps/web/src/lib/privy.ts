@@ -11,7 +11,7 @@
  *   Dashboard > Configuration > App settings > Clients
  *
  * Each client can have different:
- * - Allowed origins (localhost:3000 for dev, uniforum.synthos.fun for prod)
+ * - Allowed origins (localhost:3000 for dev, uniforum.up.railway.app for prod)
  * - Session durations
  * - Cookie settings
  */
@@ -59,12 +59,16 @@ export const unichainMainnet = {
 /**
  * Privy configuration
  */
+const APP_URL =
+  process.env.NEXT_PUBLIC_APP_URL ||
+  'https://e3ca-2001-f40-9a4-9909-c174-3ed7-2e4a-bb9e.ngrok-free.app';
+
 export const privyConfig: PrivyClientConfig = {
   // Appearance
   appearance: {
     theme: 'dark',
     accentColor: '#FF007A', // Uniswap pink
-    logo: 'https://uniforum.synthos.fun/logo.png',
+    logo: `${APP_URL.replace(/\/$/, '')}/logo.png`,
     showWalletLoginFirst: false, // Show email/social first for better onboarding
   },
 

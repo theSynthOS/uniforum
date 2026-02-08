@@ -8,6 +8,84 @@ import { agents, ens } from '@/lib/api';
 
 const STRATEGIES = ['conservative', 'moderate', 'aggressive'] as const;
 
+const DECISION_DNA_PRESETS = {
+  conservative: {
+    label: 'Conservative',
+    rulesOfThumb: [
+      'Reject swaps if slippage > 40 bps unless liquidity is deep',
+      'Prefer narrow ranges on blue-chip pairs; avoid thin liquidity',
+      'Require MEV protection hooks in volatile markets',
+    ],
+    constraints: {
+      maxRiskScore: 0.35,
+      maxSlippageBps: 40,
+      maxSwapAmount: 0.75,
+      requirePoolMatch: true,
+    },
+    objectiveWeights: {
+      capital: 60,
+      fee: 30,
+      growth: 10,
+    },
+    debate: {
+      enabled: true,
+      rounds: 2,
+      delayMs: 1500,
+    },
+    temperatureDelta: -0.05,
+  },
+  balanced: {
+    label: 'Balanced',
+    rulesOfThumb: [
+      'Reject swaps if slippage > 80 bps unless volatility is rising',
+      'Balance tight ranges with fee capture on stable pairs',
+      'Use dynamic fees when 24h volatility exceeds 4%',
+    ],
+    constraints: {
+      maxRiskScore: 0.6,
+      maxSlippageBps: 80,
+      maxSwapAmount: 2,
+      requirePoolMatch: true,
+    },
+    objectiveWeights: {
+      capital: 40,
+      fee: 35,
+      growth: 25,
+    },
+    debate: {
+      enabled: true,
+      rounds: 2,
+      delayMs: 1200,
+    },
+    temperatureDelta: 0.05,
+  },
+  aggressive: {
+    label: 'Aggressive',
+    rulesOfThumb: [
+      'Allow slippage up to 150 bps when momentum is strong',
+      'Favor wide ranges on volatile pairs for upside capture',
+      'Use limit orders around key ticks for breakout trades',
+    ],
+    constraints: {
+      maxRiskScore: 0.85,
+      maxSlippageBps: 150,
+      maxSwapAmount: 5,
+      requirePoolMatch: false,
+    },
+    objectiveWeights: {
+      capital: 20,
+      fee: 30,
+      growth: 50,
+    },
+    debate: {
+      enabled: true,
+      rounds: 2,
+      delayMs: 900,
+    },
+    temperatureDelta: 0.12,
+  },
+} as const;
+
 export default function CreateAgentModal({ onClose }: { onClose: () => void }) {
   const { authenticated, ready, login, getAccessToken, user } = usePrivy();
   const [name, setName] = useState('alice');
@@ -17,14 +95,44 @@ export default function CreateAgentModal({ onClose }: { onClose: () => void }) {
   const [expertise, setExpertise] = useState(
     'Seasoned LP focusing on tight-range liquidity and fee optimization.'
   );
+  const [rulesOfThumbInput, setRulesOfThumbInput] = useState(
+    'Reject swaps if slippage > 60 bps unless deep liquidity\nPrefer dynamic fees when 24h vol > 4%'
+  );
+  const [maxRiskScore, setMaxRiskScore] = useState(0.62);
+  const [maxSlippageBps, setMaxSlippageBps] = useState(80);
+  const [maxSwapAmount, setMaxSwapAmount] = useState(2);
+  const [requirePoolMatch, setRequirePoolMatch] = useState(true);
+  const [weightCapital, setWeightCapital] = useState(35);
+  const [weightFee, setWeightFee] = useState(40);
+  const [weightGrowth, setWeightGrowth] = useState(25);
+  const [debateEnabled, setDebateEnabled] = useState(true);
+  const [debateRounds, setDebateRounds] = useState(2);
+  const [debateDelayMs, setDebateDelayMs] = useState(1200);
+  const [temperatureDelta, setTemperatureDelta] = useState(0.05);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdAgent, setCreatedAgent] = useState<Awaited<
-    ReturnType<typeof agents.create>
+    ReturnType<typeof agents.upload>
   > | null>(null);
   const [ensStatus, setEnsStatus] = useState<
     'idle' | 'checking' | 'available' | 'taken' | 'invalid' | 'error'
   >('idle');
+
+  const applyPreset = (presetKey: keyof typeof DECISION_DNA_PRESETS) => {
+    const preset = DECISION_DNA_PRESETS[presetKey];
+    setRulesOfThumbInput(preset.rulesOfThumb.join('\n'));
+    setMaxRiskScore(preset.constraints.maxRiskScore);
+    setMaxSlippageBps(preset.constraints.maxSlippageBps);
+    setMaxSwapAmount(preset.constraints.maxSwapAmount);
+    setRequirePoolMatch(preset.constraints.requirePoolMatch);
+    setWeightCapital(preset.objectiveWeights.capital);
+    setWeightFee(preset.objectiveWeights.fee);
+    setWeightGrowth(preset.objectiveWeights.growth);
+    setDebateEnabled(preset.debate.enabled);
+    setDebateRounds(preset.debate.rounds);
+    setDebateDelayMs(preset.debate.delayMs);
+    setTemperatureDelta(preset.temperatureDelta);
+  };
 
   const ensName = useMemo(() => {
     const trimmed = name.trim().toLowerCase() || 'agent';
@@ -56,12 +164,46 @@ export default function CreateAgentModal({ onClose }: { onClose: () => void }) {
         .filter(Boolean),
     [preferredPools]
   );
+  const rulesOfThumb = useMemo(
+    () =>
+      rulesOfThumbInput
+        .split('\n')
+        .map((rule) => rule.trim())
+        .filter(Boolean),
+    [rulesOfThumbInput]
+  );
+  const objectiveWeights = useMemo(() => {
+    const total = weightCapital + weightFee + weightGrowth;
+    if (total <= 0) {
+      return { capitalPreservation: 0.35, feeIncome: 0.4, growth: 0.25 };
+    }
+    return {
+      capitalPreservation: Number((weightCapital / total).toFixed(2)),
+      feeIncome: Number((weightFee / total).toFixed(2)),
+      growth: Number((weightGrowth / total).toFixed(2)),
+    };
+  }, [weightCapital, weightFee, weightGrowth]);
+  const constraints = useMemo(
+    () => ({
+      maxRiskScore,
+      maxSlippageBps,
+      maxSwapAmount,
+      requirePoolMatch,
+    }),
+    [maxRiskScore, maxSlippageBps, maxSwapAmount, requirePoolMatch]
+  );
+
+  const weightTotal = weightCapital + weightFee + weightGrowth;
 
   const canSubmit =
     ready &&
     authenticated &&
     name.trim().length >= 3 &&
     normalizedPools.length > 0 &&
+    rulesOfThumb.length > 0 &&
+    weightTotal > 0 &&
+    maxRiskScore >= 0 &&
+    maxRiskScore <= 1 &&
     ensStatus === 'available' &&
     !isSubmitting;
 
@@ -124,19 +266,51 @@ export default function CreateAgentModal({ onClose }: { onClose: () => void }) {
       return;
     }
 
+    if (rulesOfThumb.length === 0) {
+      setError('Add at least one rules of thumb line.');
+      return;
+    }
+
+    if (weightTotal <= 0) {
+      setError('Objective weights must sum to more than zero.');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const token = await getAccessToken();
       if (!token) {
         throw new Error('Unable to authenticate. Please reconnect your wallet.');
       }
-      const agent = await agents.create(
+      const characterConfig = {
+        rulesOfThumb,
+        constraints,
+        objectiveWeights,
+        debate: {
+          enabled: debateEnabled,
+          rounds: debateRounds,
+          delayMs: debateDelayMs,
+        },
+        temperatureDelta,
+      };
+
+      const agent = await agents.upload(
         {
           name: trimmedName,
           strategy,
           riskTolerance,
           preferredPools: normalizedPools,
           expertiseContext: expertise.trim() || undefined,
+          rulesOfThumb,
+          constraints,
+          objectiveWeights,
+          debate: {
+            enabled: debateEnabled,
+            rounds: debateRounds,
+            delayMs: debateDelayMs,
+          },
+          temperatureDelta,
+          characterConfig,
         },
         token
       );
@@ -258,6 +432,176 @@ export default function CreateAgentModal({ onClose }: { onClose: () => void }) {
                     className="w-full border-2 border-[#3a2b1f] bg-[#120d0a] px-3 py-2 text-sm text-[#f5e6c8]"
                   />
                 </label>
+              </div>
+            </div>
+
+            <div className="rounded-none border-2 border-[#3a2b1f] bg-[#201915] p-5">
+              <p className="mb-3 text-xs uppercase tracking-[0.3em] text-[#ffd966]">
+                Decision DNA (Required)
+              </p>
+              <div className="mb-4 flex flex-wrap items-center gap-2">
+                {Object.entries(DECISION_DNA_PRESETS).map(([key, preset]) => (
+                  <Button
+                    key={key}
+                    size="small"
+                    variant="ghost"
+                    onClick={() => applyPreset(key as keyof typeof DECISION_DNA_PRESETS)}
+                  >
+                    {preset.label}
+                  </Button>
+                ))}
+              </div>
+              <p className="mb-4 text-xs text-[#c9b693]">
+                Presets fill rules of thumb, constraints, objective weights, and debate settings.
+              </p>
+              <div className="grid gap-4">
+                <label className="grid gap-2 text-sm">
+                  Rules of Thumb (one per line)
+                  <textarea
+                    value={rulesOfThumbInput}
+                    onChange={(event) => setRulesOfThumbInput(event.target.value)}
+                    rows={4}
+                    className="w-full border-2 border-[#3a2b1f] bg-[#120d0a] px-3 py-2 text-sm text-[#f5e6c8]"
+                    placeholder="Reject swaps if slippage > 60 bps unless deep liquidity"
+                  />
+                </label>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="grid gap-2 text-sm">
+                    Max Risk Score (0-1)
+                    <input
+                      type="number"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={maxRiskScore}
+                      onChange={(event) => setMaxRiskScore(Number(event.target.value))}
+                      className="w-full border-2 border-[#3a2b1f] bg-[#120d0a] px-3 py-2 text-sm text-[#f5e6c8]"
+                    />
+                  </label>
+                  <label className="grid gap-2 text-sm">
+                    Max Slippage (bps)
+                    <input
+                      type="number"
+                      min={1}
+                      max={300}
+                      step={5}
+                      value={maxSlippageBps}
+                      onChange={(event) => setMaxSlippageBps(Number(event.target.value))}
+                      className="w-full border-2 border-[#3a2b1f] bg-[#120d0a] px-3 py-2 text-sm text-[#f5e6c8]"
+                    />
+                  </label>
+                  <label className="grid gap-2 text-sm">
+                    Max Swap Amount (token)
+                    <input
+                      type="number"
+                      min={0.01}
+                      step={0.01}
+                      value={maxSwapAmount}
+                      onChange={(event) => setMaxSwapAmount(Number(event.target.value))}
+                      className="w-full border-2 border-[#3a2b1f] bg-[#120d0a] px-3 py-2 text-sm text-[#f5e6c8]"
+                    />
+                  </label>
+                  <label className="flex items-center gap-3 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={requirePoolMatch}
+                      onChange={(event) => setRequirePoolMatch(event.target.checked)}
+                      className="h-4 w-4 accent-[#ffd966]"
+                    />
+                    Require pool match
+                  </label>
+                </div>
+
+                <div className="rounded-none border-2 border-[#3a2b1f] bg-[#120d0a] p-3">
+                  <p className="mb-2 text-xs uppercase tracking-[0.25em] text-[#ffd966]">
+                    Objective Weights
+                  </p>
+                  <div className="grid gap-3 text-sm">
+                    <label className="grid gap-1">
+                      Capital Preservation ({weightCapital})
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={weightCapital}
+                        onChange={(event) => setWeightCapital(Number(event.target.value))}
+                        className="w-full accent-[#ffd966]"
+                      />
+                    </label>
+                    <label className="grid gap-1">
+                      Fee Income ({weightFee})
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={weightFee}
+                        onChange={(event) => setWeightFee(Number(event.target.value))}
+                        className="w-full accent-[#ffd966]"
+                      />
+                    </label>
+                    <label className="grid gap-1">
+                      Growth ({weightGrowth})
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={weightGrowth}
+                        onChange={(event) => setWeightGrowth(Number(event.target.value))}
+                        className="w-full accent-[#ffd966]"
+                      />
+                    </label>
+                    <p className="text-xs text-[#c9b693]">
+                      Normalized weights: {JSON.stringify(objectiveWeights)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="flex items-center gap-3 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={debateEnabled}
+                      onChange={(event) => setDebateEnabled(event.target.checked)}
+                      className="h-4 w-4 accent-[#ffd966]"
+                    />
+                    Enable debate loop
+                  </label>
+                  <label className="grid gap-2 text-sm">
+                    Debate Rounds
+                    <input
+                      type="number"
+                      min={1}
+                      max={3}
+                      value={debateRounds}
+                      onChange={(event) => setDebateRounds(Number(event.target.value))}
+                      className="w-full border-2 border-[#3a2b1f] bg-[#120d0a] px-3 py-2 text-sm text-[#f5e6c8]"
+                    />
+                  </label>
+                  <label className="grid gap-2 text-sm">
+                    Debate Delay (ms)
+                    <input
+                      type="number"
+                      min={250}
+                      step={50}
+                      value={debateDelayMs}
+                      onChange={(event) => setDebateDelayMs(Number(event.target.value))}
+                      className="w-full border-2 border-[#3a2b1f] bg-[#120d0a] px-3 py-2 text-sm text-[#f5e6c8]"
+                    />
+                  </label>
+                  <label className="grid gap-2 text-sm">
+                    Temperature Delta
+                    <input
+                      type="number"
+                      min={-0.2}
+                      max={0.2}
+                      step={0.01}
+                      value={temperatureDelta}
+                      onChange={(event) => setTemperatureDelta(Number(event.target.value))}
+                      className="w-full border-2 border-[#3a2b1f] bg-[#120d0a] px-3 py-2 text-sm text-[#f5e6c8]"
+                    />
+                  </label>
+                </div>
               </div>
             </div>
 

@@ -8,6 +8,7 @@ import { z } from 'zod';
 export const ProposalStatus = {
   VOTING: 'voting',
   APPROVED: 'approved',
+  EXECUTING: 'executing',
   REJECTED: 'rejected',
   EXECUTED: 'executed',
   EXPIRED: 'expired',

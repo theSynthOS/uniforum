@@ -85,6 +85,13 @@ export const ENS_TEXT_KEYS = {
   EXPERTISE: 'eth.uniforum.expertise',
   AGENT_WALLET: 'eth.uniforum.agentWallet',
   CREATED_AT: 'eth.uniforum.createdAt',
+  RULES_OF_THUMB: 'eth.uniforum.rulesOfThumb',
+  CONSTRAINTS: 'eth.uniforum.constraints',
+  OBJECTIVE_WEIGHTS: 'eth.uniforum.objectiveWeights',
+  DEBATE: 'eth.uniforum.debate',
+  TEMPERATURE_DELTA: 'eth.uniforum.temperatureDelta',
+  CHARACTER_PLUGINS: 'eth.uniforum.characterPlugins',
+  UNISWAP_HISTORY: 'eth.uniforum.uniswapHistory',
 } as const;
 
 /**
@@ -97,8 +104,17 @@ export function buildEnsTextRecords(config: {
   expertiseContext?: string;
   agentWallet: string;
   createdAt: Date;
+  characterConfig?: {
+    rulesOfThumb?: string[];
+    constraints?: Record<string, unknown>;
+    objectiveWeights?: Record<string, number>;
+    debate?: Record<string, unknown>;
+    temperatureDelta?: number;
+  };
+  characterPlugins?: string[];
+  uniswapHistory?: unknown;
 }): Record<string, string> {
-  return {
+  const records: Record<string, string> = {
     [ENS_TEXT_KEYS.VERSION]: '1.0',
     [ENS_TEXT_KEYS.STRATEGY]: config.strategy,
     [ENS_TEXT_KEYS.RISK_TOLERANCE]: config.riskTolerance.toString(),
@@ -107,4 +123,48 @@ export function buildEnsTextRecords(config: {
     [ENS_TEXT_KEYS.AGENT_WALLET]: config.agentWallet,
     [ENS_TEXT_KEYS.CREATED_AT]: Math.floor(config.createdAt.getTime() / 1000).toString(),
   };
+
+  const safeJson = (value: unknown) => {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return undefined;
+    }
+  };
+
+  if (config.characterConfig?.rulesOfThumb?.length) {
+    const encoded = safeJson(config.characterConfig.rulesOfThumb);
+    if (encoded) records[ENS_TEXT_KEYS.RULES_OF_THUMB] = encoded;
+  }
+
+  if (config.characterConfig?.constraints) {
+    const encoded = safeJson(config.characterConfig.constraints);
+    if (encoded && encoded !== '{}') records[ENS_TEXT_KEYS.CONSTRAINTS] = encoded;
+  }
+
+  if (config.characterConfig?.objectiveWeights) {
+    const encoded = safeJson(config.characterConfig.objectiveWeights);
+    if (encoded && encoded !== '{}') records[ENS_TEXT_KEYS.OBJECTIVE_WEIGHTS] = encoded;
+  }
+
+  if (config.characterConfig?.debate) {
+    const encoded = safeJson(config.characterConfig.debate);
+    if (encoded && encoded !== '{}') records[ENS_TEXT_KEYS.DEBATE] = encoded;
+  }
+
+  if (typeof config.characterConfig?.temperatureDelta === 'number') {
+    records[ENS_TEXT_KEYS.TEMPERATURE_DELTA] = config.characterConfig.temperatureDelta.toString();
+  }
+
+  if (config.characterPlugins?.length) {
+    const encoded = safeJson(config.characterPlugins);
+    if (encoded) records[ENS_TEXT_KEYS.CHARACTER_PLUGINS] = encoded;
+  }
+
+  if (config.uniswapHistory != null) {
+    const encoded = safeJson(config.uniswapHistory);
+    if (encoded) records[ENS_TEXT_KEYS.UNISWAP_HISTORY] = encoded;
+  }
+
+  return records;
 }

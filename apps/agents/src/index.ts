@@ -15,9 +15,40 @@
 
 import { AgentManager } from './manager';
 import { createSupabaseClient } from './lib/supabase';
+import sqlPlugin, { createDatabaseAdapter } from '@elizaos/plugin-sql';
+
+async function ensureElizaDatabase() {
+  const postgresUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL || undefined;
+  const dataDir =
+    process.env.PGLITE_DATA_DIR ||
+    process.env.ELIZA_DATABASE_DIR ||
+    process.env.ELIZA_DATA_DIR ||
+    undefined;
+
+  const adapter = createDatabaseAdapter(
+    {
+      postgresUrl,
+      dataDir,
+    },
+    '00000000-0000-0000-0000-000000000000'
+  );
+
+  if (!(await adapter.isReady())) {
+    await adapter.init();
+  }
+
+  await adapter.runPluginMigrations([sqlPlugin], {
+    verbose: true,
+    force: process.env.ELIZA_ALLOW_DESTRUCTIVE_MIGRATIONS === 'true',
+  });
+
+  // Do not close here: plugin-sql uses a global singleton for PGlite.
+  // Closing it here marks the DB as shutting down and breaks runtime init.
+}
 
 async function main() {
   console.log('[agents] Starting Uniforum Agents Service...');
+  await ensureElizaDatabase();
 
   // Initialize Supabase client
   const supabase = createSupabaseClient();

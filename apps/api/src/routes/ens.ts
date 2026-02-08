@@ -183,8 +183,13 @@ async function resolveRecord(name: string, data: `0x${string}`) {
 
   const rawWalletAddress = getAgentWalletAddress(agent);
   const walletAddress = normalizeWalletAddress(rawWalletAddress);
-  if (walletAddress === ZERO_ADDRESS && rawWalletAddress && typeof rawWalletAddress !== 'string') {
-    console.warn('Unexpected wallet address type:', typeof rawWalletAddress, rawWalletAddress);
+  const safeWalletAddress = isAddress(walletAddress) ? walletAddress : ZERO_ADDRESS;
+  if (safeWalletAddress === ZERO_ADDRESS && rawWalletAddress) {
+    console.warn(
+      'Unexpected wallet address value:',
+      typeof rawWalletAddress,
+      rawWalletAddress
+    );
   }
 
   const textRecords: Record<string, string> = buildEnsTextRecords({
@@ -192,7 +197,7 @@ async function resolveRecord(name: string, data: `0x${string}`) {
     riskTolerance: agent.risk_tolerance,
     preferredPools: agent.preferred_pools,
     expertiseContext: agent.expertise_context || '',
-    agentWallet: walletAddress,
+    agentWallet: safeWalletAddress,
     createdAt: new Date(agent.created_at),
     characterConfig: (agent as { character_config?: Record<string, unknown> }).character_config,
     characterPlugins:
@@ -201,7 +206,7 @@ async function resolveRecord(name: string, data: `0x${string}`) {
   });
 
   textRecords['eth.uniforum.owner'] = agent.owner_address;
-  textRecords[ENS_TEXT_KEYS.AGENT_WALLET] = walletAddress;
+  textRecords[ENS_TEXT_KEYS.AGENT_WALLET] = safeWalletAddress;
   if (agent.current_forum_id) {
     textRecords['eth.uniforum.currentForum'] = agent.current_forum_id;
   }
@@ -214,13 +219,13 @@ async function resolveRecord(name: string, data: `0x${string}`) {
     if (decoded.args?.[0] !== expectedNode) {
       return { result: encodeAbiParameters([{ type: 'bytes' }], ['0x']), fullName: full };
     }
-    if (typeof walletAddress !== 'string') {
+    if (!isAddress(safeWalletAddress)) {
       return { result: encodeAbiParameters([{ type: 'bytes' }], ['0x']), fullName: full };
     }
     const result = encodeFunctionResult({
       abi: ADDR_ABI,
       functionName: 'addr',
-      result: [walletAddress as `0x${string}`],
+      result: [safeWalletAddress as `0x${string}`],
     });
     return { result, fullName: full };
   }
@@ -233,7 +238,7 @@ async function resolveRecord(name: string, data: `0x${string}`) {
       const empty = encodeAbiParameters([{ type: 'bytes' }], ['0x']);
       return { result: empty, fullName: full };
     }
-    const addressBytes = toHex(toBytes(walletAddress));
+    const addressBytes = toHex(toBytes(safeWalletAddress));
     const result = encodeFunctionResult({
       abi: ADDR_COIN_ABI,
       functionName: 'addr',

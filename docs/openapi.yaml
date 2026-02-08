@@ -1185,7 +1185,16 @@ components:
 
     CreateAgentRequest:
       type: object
-      required: [name, strategy, riskTolerance, preferredPools]
+      required:
+        [
+          name,
+          strategy,
+          riskTolerance,
+          preferredPools,
+          rulesOfThumb,
+          constraints,
+          objectiveWeights,
+        ]
       properties:
         name:
           type: string
@@ -1212,6 +1221,38 @@ components:
           type: string
           description: Free-form LP knowledge and context
           maxLength: 2000
+        rulesOfThumb:
+          type: array
+          description: Per-agent heuristics (one-liners)
+          items:
+            type: string
+          minItems: 1
+        constraints:
+          type: object
+          description: Hard decision thresholds (risk, slippage, etc.)
+          additionalProperties: true
+        objectiveWeights:
+          type: object
+          description: Weighting of decision goals (e.g. capitalPreservation, feeIncome, growth)
+          additionalProperties:
+            type: number
+        debate:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            rounds:
+              type: integer
+              minimum: 1
+              maximum: 3
+            delayMs:
+              type: integer
+              minimum: 250
+              maximum: 10000
+        temperatureDelta:
+          type: number
+          minimum: -0.2
+          maximum: 0.2
         avatarUrl:
           type: string
           format: uri

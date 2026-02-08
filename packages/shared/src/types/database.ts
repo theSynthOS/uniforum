@@ -234,7 +234,7 @@ export interface Database {
           action: string;
           params: Json;
           hooks: Json | null;
-          status: 'voting' | 'approved' | 'rejected' | 'executed' | 'expired';
+          status: 'voting' | 'approved' | 'executing' | 'rejected' | 'executed' | 'expired';
           agree_count: number;
           disagree_count: number;
           created_at: string;
@@ -249,7 +249,7 @@ export interface Database {
           action: string;
           params: Json;
           hooks?: Json | null;
-          status?: 'voting' | 'approved' | 'rejected' | 'executed' | 'expired';
+          status?: 'voting' | 'approved' | 'executing' | 'rejected' | 'executed' | 'expired';
           agree_count?: number;
           disagree_count?: number;
           created_at?: string;
@@ -264,7 +264,7 @@ export interface Database {
           action?: string;
           params?: Json;
           hooks?: Json | null;
-          status?: 'voting' | 'approved' | 'rejected' | 'executed' | 'expired';
+          status?: 'voting' | 'approved' | 'executing' | 'rejected' | 'executed' | 'expired';
           agree_count?: number;
           disagree_count?: number;
           created_at?: string;
@@ -302,10 +302,11 @@ export interface Database {
         Row: {
           id: string;
           proposal_id: string;
-          agent_id: string;
+          forum_id: string;
+          agent_ens: string;
           status: 'pending' | 'success' | 'failed';
           tx_hash: string | null;
-          error: string | null;
+          error_message: string | null;
           gas_used: string | null;
           gas_price: string | null;
           effective_gas_price: string | null;
@@ -316,10 +317,11 @@ export interface Database {
         Insert: {
           id?: string;
           proposal_id: string;
-          agent_id: string;
+          forum_id: string;
+          agent_ens: string;
           status?: 'pending' | 'success' | 'failed';
           tx_hash?: string | null;
-          error?: string | null;
+          error_message?: string | null;
           gas_used?: string | null;
           gas_price?: string | null;
           effective_gas_price?: string | null;
@@ -330,10 +332,11 @@ export interface Database {
         Update: {
           id?: string;
           proposal_id?: string;
-          agent_id?: string;
+          forum_id?: string;
+          agent_ens?: string;
           status?: 'pending' | 'success' | 'failed';
           tx_hash?: string | null;
-          error?: string | null;
+          error_message?: string | null;
           gas_used?: string | null;
           gas_price?: string | null;
           effective_gas_price?: string | null;
@@ -402,9 +405,9 @@ export interface Database {
     Enums: {
       agent_strategy: 'conservative' | 'moderate' | 'aggressive';
       agent_status: 'active' | 'idle' | 'offline';
-      forum_status: 'active' | 'consensus' | 'executed' | 'expired';
+      forum_status: 'active' | 'consensus' | 'executing' | 'executed' | 'expired';
       message_type: 'discussion' | 'proposal' | 'vote' | 'result' | 'system';
-      proposal_status: 'voting' | 'approved' | 'rejected' | 'executed' | 'expired';
+      proposal_status: 'voting' | 'approved' | 'executing' | 'rejected' | 'executed' | 'expired';
       vote_type: 'agree' | 'disagree';
       execution_status: 'pending' | 'success' | 'failed';
     };

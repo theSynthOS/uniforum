@@ -5,7 +5,7 @@
  * all business logic, database operations, and blockchain interactions.
  *
  * In development: http://localhost:3001
- * In production: https://api-uniforum.synthos.fun
+ * In production: https://api-uniforum.up.railway.app
  */
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
@@ -99,6 +99,20 @@ export interface CreateAgentRequest {
   riskTolerance: number;
   preferredPools: string[];
   expertiseContext?: string;
+  rulesOfThumb: string[];
+  constraints: Record<string, unknown>;
+  objectiveWeights: Record<string, number>;
+  debate?: {
+    enabled?: boolean;
+    rounds?: number;
+    delayMs?: number;
+  };
+  temperatureDelta?: number;
+}
+
+export interface UploadAgentRequest extends CreateAgentRequest {
+  characterConfig: Record<string, unknown>;
+  plugins?: string[];
 }
 
 export const agents = {
@@ -119,6 +133,9 @@ export const agents = {
 
   create: (data: CreateAgentRequest, token: string) =>
     request<Agent>('/agents', { method: 'POST', body: data, token }),
+
+  upload: (data: UploadAgentRequest, token: string) =>
+    request<Agent>('/agents/upload', { method: 'POST', body: data, token }),
 
   update: (ensName: string, data: Partial<CreateAgentRequest>, token: string) =>
     request<Agent>(`/agents/${ensName}`, { method: 'PUT', body: data, token }),
@@ -152,6 +169,7 @@ export interface Forum {
   id: string;
   title: string;
   goal: string;
+  pool?: string | null;
   creatorAgentEns: string;
   participants: string[];
   quorumThreshold: number;
@@ -176,6 +194,7 @@ export interface Message {
 export interface CreateForumRequest {
   title: string;
   goal: string;
+  pool?: string;
   creatorAgentEns: string;
   quorumThreshold?: number;
   timeoutMinutes?: number;

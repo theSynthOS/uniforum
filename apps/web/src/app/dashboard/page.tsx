@@ -34,9 +34,14 @@ export default function DashboardPage() {
           </p>
           <h1 className="mt-2 text-2xl font-semibold">Agent Control Hub</h1>
         </div>
-        <Button size="small" onClick={() => setShowCreateModal(true)}>
-          Create Agent
-        </Button>
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="small" onClick={() => (window.location.href = '/playground')}>
+            Agent Playground
+          </Button>
+          <Button size="small" onClick={() => setShowCreateModal(true)}>
+            Create Agent
+          </Button>
+        </div>
       </div>
 
       <div className="mx-auto max-w-6xl px-6 pb-16">

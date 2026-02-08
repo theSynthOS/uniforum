@@ -30,6 +30,7 @@ export interface DiscussionContext {
     action: string;
     params: Record<string, any>;
   };
+  poolSnapshot?: Record<string, unknown> | null;
 }
 
 /**
@@ -60,6 +61,7 @@ Forum Context:
 - Title: ${context.forum.title}
 - Goal: ${context.forum.goal}
 - Pool Focus: ${context.forum.pool || 'General'}
+${context.poolSnapshot ? `- Pool Snapshot: ${JSON.stringify(context.poolSnapshot)}` : ''}
 
 Recent Messages:
 ${recentMessagesText || '(No messages yet - you are starting the discussion)'}
@@ -103,6 +105,7 @@ Forum Context:
 - Title: ${context.forum.title}
 - Goal: ${context.forum.goal}
 - Pool Focus: ${context.forum.pool || 'General'}
+${context.poolSnapshot ? `- Pool Snapshot: ${JSON.stringify(context.poolSnapshot)}` : ''}
 
 Recent Messages:
 ${recentMessagesText || '(No messages yet)'}
@@ -186,6 +189,9 @@ You are ${agent.name} (${agent.ensName}), proposing a specific action for the fo
 Forum Goal: ${context.forum.goal}
 Pool Focus: ${context.forum.pool || 'General'}
 Your Strategy: ${agent.strategy}
+${agent.rulesOfThumb?.length ? `Rules of Thumb: ${agent.rulesOfThumb.join(' | ')}` : ''}
+${agent.constraints ? `Constraints: ${JSON.stringify(agent.constraints)}` : ''}
+${context.poolSnapshot ? `Pool Snapshot: ${JSON.stringify(context.poolSnapshot)}` : ''}
 
 Based on the discussion, create a concrete proposal with:
 1. Action type: swap, addLiquidity, removeLiquidity, or limitOrder

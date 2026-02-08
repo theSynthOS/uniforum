@@ -23,6 +23,7 @@ app.use(
       'http://localhost:3000',
       'https://uniforum.synthos.fun',
       'https://staging.uniforum.synthos.fun',
+      'https://e3ca-2001-f40-9a4-9909-c174-3ed7-2e4a-bb9e.ngrok-free.app',
     ],
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
