@@ -577,17 +577,14 @@ ensRoutes.get('/verify/:name', async (c) => {
   });
 
   let responseData: `0x${string}` | undefined;
-  const url = `${gatewayUrl}?sender=${resolverAddress}&data=${callData}`;
-  let res = await fetch(url);
+  const res = await fetch(gatewayUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sender: resolverAddress, data: callData }),
+  });
   if (!res.ok) {
-    res = await fetch(gatewayUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sender: resolverAddress, data: callData }),
-    });
-  }
-  if (!res.ok) {
-    return c.json({ error: 'Gateway error', status: res.status }, 502);
+    const body = await res.text();
+    return c.json({ error: 'Gateway error', status: res.status, body }, 502);
   }
   try {
     const json = (await res.json()) as { data?: `0x${string}`; result?: `0x${string}` };
