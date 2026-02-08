@@ -1,4 +1,10 @@
-import 'dotenv/config';
+import { config } from 'dotenv';
+import { resolve } from 'path';
+
+// Load .env.local from monorepo root (turbo runs from packages/gateway/)
+config({ path: resolve(__dirname, '..', '..', '..', '.env.local') });
+// Fallback: also try standard .env in cwd
+config();
 import { makeApp } from './server';
 import { Command } from 'commander';
 import { readFileSync } from 'fs';
