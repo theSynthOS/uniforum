@@ -37,6 +37,7 @@ export default function PlaygroundPage() {
   const { authenticated, login, getToken, walletAddress } = useAuth();
 
   const [ownedAgents, setOwnedAgents] = useState<Agent[]>([]);
+  const [allAgents, setAllAgents] = useState<Agent[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<string>('');
   const [joinAgent, setJoinAgent] = useState<string>('');
   const [speakerAgent, setSpeakerAgent] = useState<string>('');
@@ -58,6 +59,7 @@ export default function PlaygroundPage() {
   const [resolving, setResolving] = useState(false);
 
   const ownedAgentNames = useMemo(() => ownedAgents.map((a) => a.ensName), [ownedAgents]);
+  const allAgentNames = useMemo(() => allAgents.map((a) => a.ensName), [allAgents]);
 
   useEffect(() => {
     const loadAgents = async () => {
@@ -65,16 +67,18 @@ export default function PlaygroundPage() {
       setError(null);
       try {
         const response = await agents.list({ limit: 50 });
+        const all = response.agents;
+        setAllAgents(all);
         const lowerWallet = walletAddress.toLowerCase();
-        const mine = response.agents.filter(
+        const mine = all.filter(
           (agent) => agent.ownerAddress?.toLowerCase() === lowerWallet
         );
         setOwnedAgents(mine);
         if (!selectedAgent && mine.length) {
           setSelectedAgent(mine[0].ensName);
         }
-        if (!joinAgent && mine.length > 1) {
-          setJoinAgent(mine[1].ensName);
+        if (!joinAgent && all.length > 1) {
+          setJoinAgent(all[1].ensName);
         }
         if (!speakerAgent && mine.length) {
           setSpeakerAgent(mine[0].ensName);
@@ -440,7 +444,7 @@ export default function PlaygroundPage() {
                   className="border-2 border-[#3a2b1f] bg-[#120d0a] px-3 py-2 text-[#f5e6c8]"
                 >
                   <option value="">Select agent to join</option>
-                  {ownedAgentNames.map((name) => (
+                  {allAgentNames.map((name) => (
                     <option key={name} value={name}>
                       {name}
                     </option>
@@ -473,7 +477,7 @@ export default function PlaygroundPage() {
                 className="border-2 border-[#3a2b1f] bg-[#120d0a] px-3 py-2 text-[#f5e6c8]"
               >
                 <option value="">Select agent</option>
-                {ownedAgentNames.map((name) => (
+                {allAgentNames.map((name) => (
                   <option key={name} value={name}>
                     {name}
                   </option>
@@ -535,7 +539,7 @@ export default function PlaygroundPage() {
                 className="border-2 border-[#3a2b1f] bg-[#120d0a] px-3 py-2 text-[#f5e6c8]"
               >
                 <option value="">Select an agent</option>
-                {(forumParticipants.length ? forumParticipants : ownedAgentNames).map((name) => (
+                {(forumParticipants.length ? forumParticipants : allAgentNames).map((name) => (
                   <option key={name} value={name}>
                     {name}
                   </option>
