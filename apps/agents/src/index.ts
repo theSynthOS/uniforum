@@ -19,20 +19,31 @@ import sqlPlugin, { createDatabaseAdapter } from '@elizaos/plugin-sql';
 
 async function ensureElizaDatabase() {
   const postgresUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL || undefined;
-  const dataDir =
+  let dataDir =
     process.env.PGLITE_DATA_DIR ||
     process.env.ELIZA_DATABASE_DIR ||
     process.env.ELIZA_DATA_DIR ||
     undefined;
 
-  // Skip Eliza DB init when no Postgres URL or data dir is configured.
-  // Uniforum agents use Supabase directly; PGlite fallback crashes on
-  // schema creation so we only run migrations when explicitly configured.
+  const sqlPluginDisabled =
+    process.env.ELIZA_DISABLE_SQL_PLUGIN === '1' ||
+    process.env.ELIZA_DISABLE_SQL_PLUGIN === 'true';
+
+  // If plugin-sql is disabled, skip migrations entirely.
+  if (sqlPluginDisabled) {
+    console.log('[agents] ELIZA_DISABLE_SQL_PLUGIN is set — skipping Eliza DB migrations');
+    return;
+  }
+
+  // If no Postgres URL or PGlite data dir is configured, default to an
+  // in-memory PGlite instance so plugin-sql always has a valid schema.
+  // Without this, plugin-sql still loads and falls back to an empty PGlite,
+  // causing "relation 'agents' does not exist" errors.
   if (!postgresUrl && !dataDir) {
     console.log(
-      '[agents] No POSTGRES_URL or PGLITE_DATA_DIR set — skipping Eliza DB migrations (using Supabase)'
+      '[agents] No POSTGRES_URL or PGLITE_DATA_DIR set — using default PGlite data dir for Eliza DB'
     );
-    return;
+    dataDir = '.eliza-data';
   }
 
   const adapter = createDatabaseAdapter(
