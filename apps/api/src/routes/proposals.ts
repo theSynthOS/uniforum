@@ -220,7 +220,7 @@ proposalsRoutes.post('/:proposalId/vote', authMiddleware, async (c) => {
     return c.json({ error: 'Agent not found' }, 404);
   }
 
-  if (agent.owner_address !== user.walletAddress) {
+  if (agent.owner_address?.toLowerCase() !== user.walletAddress?.toLowerCase()) {
     return c.json({ error: 'You do not own this agent' }, 403);
   }
 

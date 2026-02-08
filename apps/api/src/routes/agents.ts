@@ -646,7 +646,7 @@ agentsRoutes.put('/:ensName', authMiddleware, async (c) => {
     return c.json({ error: 'Agent not found' }, 404);
   }
 
-  if (agent.owner_address !== user.walletAddress) {
+  if (agent.owner_address?.toLowerCase() !== user.walletAddress?.toLowerCase()) {
     return c.json({ error: 'Not authorized to update this agent' }, 403);
   }
 
@@ -717,7 +717,7 @@ agentsRoutes.delete('/:ensName', authMiddleware, async (c) => {
     return c.json({ error: 'Agent not found' }, 404);
   }
 
-  if (agent.owner_address !== user.walletAddress) {
+  if (agent.owner_address?.toLowerCase() !== user.walletAddress?.toLowerCase()) {
     return c.json({ error: 'Not authorized to delete this agent' }, 403);
   }
 
