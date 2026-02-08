@@ -12,9 +12,10 @@ export function drawAgent(
   const x = agent.position.x;
   const y = agent.position.y;
 
-  // Determine Sprite Key (hash full ID for uniqueness)
-  const hash = agent.id.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
-  const charIndex = (hash % 31) + 1; // 1-31 range
+  // Determine Sprite Key (hash name for consistency with UI)
+  const hash = agent.name.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+  const charIndex = (Math.abs(hash) % 32) + 1; // 1-32 range
+  
   const sprite = assets.getImage(`agent_${charIndex}`);
 
   if (sprite) {
@@ -113,5 +114,5 @@ export function drawAgent(
   ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
   ctx.font = '10px "Inter", sans-serif'; 
   ctx.textAlign = 'center';
-  ctx.fillText(agent.name.split('.')[0], x, y + 24);
+  ctx.fillText(agent.name, x, y + 24);
 }

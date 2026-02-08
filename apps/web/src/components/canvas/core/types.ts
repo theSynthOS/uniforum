@@ -18,6 +18,8 @@ export interface Agent {
   status: 'idle' | 'moving' | 'discussing' | 'speaking' | 'voting';
   currentRoomId?: string;
   lastMessage?: string;
+  // Metadata for clustering
+  expertise?: string; // e.g. "Seasoned LP..."
   // Visual state
   direction?: 'left' | 'right';
   frame?: number;

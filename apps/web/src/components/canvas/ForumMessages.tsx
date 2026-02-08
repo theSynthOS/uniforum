@@ -6,7 +6,7 @@ export interface ForumTopic {
   id: string;
   title: string;
   agents: string[];
-  messages: { agent: string; message: string }[];
+  messages: { agent: string; message: string; createdAt: string }[];
   timestamp: Date;
   isActive: boolean;
 }
@@ -15,21 +15,19 @@ interface ForumMessagesProps {
   topics: ForumTopic[];
 }
 
-// Helper to get sprite path from agent name
-// Maps known agent names to their character IDs
-const AGENT_SPRITE_MAP: Record<string, number> = {
-  'yudhagent.eth': 1,
-  'trader.eth': 2,
-  'whale.eth': 3,
-  'degen.eth': 4,
-  'lpking.eth': 5,
-  'yieldfarmer.eth': 6,
-  'gasmaster.eth': 7,
-  'hodler.eth': 8,
+// Total number of character sprites available
+const TOTAL_CHARACTERS = 32;
+
+// Generate a consistent character number from agent name using simple hash
+// MUST MATCH logic in drawAgent.ts for visual consistency
+const getCharacterFromName = (agentName: string): number => {
+  // Simple sum hash to match drawAgent.ts
+  const hash = agentName.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+  return (Math.abs(hash) % TOTAL_CHARACTERS) + 1;
 };
 
 const getAgentSpritePath = (agentName: string): string => {
-  const characterNum = AGENT_SPRITE_MAP[agentName] || 1;
+  const characterNum = getCharacterFromName(agentName);
   return `/sprites/sprite_split/character_${characterNum}/character_${characterNum}_frame32x32.png`;
 };
 
@@ -83,7 +81,7 @@ const ForumModal: React.FC<{
                       className="w-4 h-4 rounded-full flex-shrink-0"
                       style={getSpriteBackgroundStyle(agent, 16)}
                     />
-                    {agent.split('.')[0]}
+                    {agent}
                   </span>
                 ))}
               </div>
@@ -132,9 +130,8 @@ const ForumModal: React.FC<{
                 <div className="flex-1 min-w-0">
                   <div className="flex items-baseline gap-2">
                     <span className="font-medium text-blue-300">
-                      {msg.agent.split('.')[0]}
+                      {msg.agent}
                     </span>
-                    <span className="text-xs text-slate-500">.eth</span>
                   </div>
                   <p className="text-slate-200 mt-1 leading-relaxed">
                     {msg.message}
@@ -204,7 +201,7 @@ export const ForumMessages: React.FC<ForumMessagesProps> = ({ topics }) => {
                         className="w-4 h-4 rounded-full flex-shrink-0"
                         style={getSpriteBackgroundStyle(agent, 16)}
                       />
-                      {agent.split('.')[0]}
+                      {agent}
                     </span>
                   ))}
                 </div>
@@ -212,7 +209,7 @@ export const ForumMessages: React.FC<ForumMessagesProps> = ({ topics }) => {
                 {/* Latest message preview */}
                 {topic.messages.length > 0 && (
                   <p className="text-xs text-slate-400 line-clamp-2">
-                    <span className="text-slate-500">{topic.messages[topic.messages.length - 1].agent.split('.')[0]}:</span>{' '}
+                    <span className="text-slate-500">{topic.messages[topic.messages.length - 1].agent}:</span>{' '}
                     {topic.messages[topic.messages.length - 1].message}
                   </p>
                 )}

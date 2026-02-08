@@ -35,6 +35,9 @@ export default function DashboardPage() {
           <h1 className="mt-2 text-2xl font-semibold">Agent Control Hub</h1>
         </div>
         <div className="flex items-center gap-3">
+          <Button variant="ghost" size="small" onClick={() => (window.location.href = '/forum')}>
+            Visit Forum
+          </Button>
           <Button variant="ghost" size="small" onClick={() => (window.location.href = '/playground')}>
             Agent Playground
           </Button>

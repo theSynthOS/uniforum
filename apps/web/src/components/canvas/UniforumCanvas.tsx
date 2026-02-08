@@ -4,57 +4,273 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { CanvasManager } from './core/CanvasManager';
 import { Agent } from './core/types';
 import { ForumMessages, ForumTopic } from './ForumMessages';
+import { agents as agentsApi, Agent as ApiAgent, forums as forumsApi, Forum } from '@/lib/api';
 
-import { getRandomWalkablePosition, findPath } from './assets/mapData';
+import { getRandomWalkablePosition, findPath, getNearestWalkablePosition } from './assets/mapData';
 
-// Placeholder mock data hook
-const useCanvasData = () => {
-    const [agents, setAgents] = useState<Agent[]>([
-        // Group on right side
-        { id: 'a1', name: 'yudhagent.eth', position: { x: 200, y: 50 }, color: '#3b82f6', status: 'moving' },
-        { id: 'a2', name: 'trader.eth', position: { x: 220, y: 70 }, color: '#10b981', status: 'moving', direction: 'left' },
-        { id: 'a3', name: 'whale.eth', position: { x: 240, y: 90 }, color: '#ec4899', status: 'moving', direction: 'right' },
-        // Group in middle-right area
-        { id: 'a4', name: 'degen.eth', position: { x: 100, y: 200 }, color: '#f59e0b', status: 'moving' },
-        { id: 'a5', name: 'lpking.eth', position: { x: 120, y: 220 }, color: '#8b5cf6', status: 'moving' },
-        // Group on left side
-        { id: 'a6', name: 'yieldfarmer.eth', position: { x: -200, y: 100 }, color: '#06b6d4', status: 'moving' },
-        { id: 'a7', name: 'gasmaster.eth', position: { x: -220, y: 120 }, color: '#ef4444', status: 'moving' },
-        { id: 'a8', name: 'hodler.eth', position: { x: -180, y: 140 }, color: '#84cc16', status: 'moving' },
-    ]);
+// Map strategy to color
+const STRATEGY_COLORS: Record<string, string> = {
+    conservative: '#3b82f6', // blue
+    moderate: '#10b981',     // green
+    aggressive: '#ec4899',   // pink
+};
 
+// Fallback colors for variety
+const FALLBACK_COLORS = ['#f59e0b', '#8b5cf6', '#06b6d4', '#ef4444', '#84cc16'];
+
+// Convert API Agent to Canvas Agent
+const apiAgentToCanvasAgent = (apiAgent: ApiAgent, index: number): Agent => {
+    const position = getRandomWalkablePosition();
+    const color = STRATEGY_COLORS[apiAgent.strategy] || FALLBACK_COLORS[index % FALLBACK_COLORS.length];
+    
+    return {
+        id: apiAgent.id,
+        name: apiAgent.ensName,
+        position,
+        color,
+        status: 'moving',
+        expertise: apiAgent.expertiseContext, // For expertise clustering
+        direction: Math.random() > 0.5 ? 'left' : 'right',
+    };
+};
+
+// Real data hook that fetches agents from API
+const useCanvasData = (forumTopics: ForumTopic[]) => {
+    const [agents, setAgents] = useState<Agent[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    
+    // Fetch agents from API on mount
     useEffect(() => {
-        const interval = setInterval(() => {
-             setAgents(prev => prev.map(a => {
-                // Skip if already discussing
-                if (a.status === 'discussing') return a;
-                
-                const move = Math.random() > 0.2; // 80% chance to move
-                if (!move) return a;
-                
-                // Pick a random walkable position
-                const target = getRandomWalkablePosition();
-                if (!target) return a;
-                
-                // Calculate Path
-                const path = findPath(a.position, target);
-                
-                // Assign Path (or stay idle if no valid path)
-                if (path.length > 0) {
-                    return {
-                         ...a,
-                         status: 'moving',
-                         targetPosition: undefined,
-                         path: path
-                     };
-                }
-                return a; // No valid path, stay put
-             }));
-        }, 1500); // Faster interval
-        return () => clearInterval(interval);
+        const fetchAgents = async () => {
+            try {
+                setIsLoading(true);
+                const response = await agentsApi.list({ limit: 50 });
+                const canvasAgents = response.agents.map((agent, index) => 
+                    apiAgentToCanvasAgent(agent, index)
+                );
+                setAgents(canvasAgents);
+                setError(null);
+            } catch (err) {
+                console.error('Failed to fetch agents:', err);
+                setError(err instanceof Error ? err.message : 'Failed to fetch agents');
+                // Fallback to sample agents for demo
+                setAgents([
+                    { id: 'demo1', name: 'demo.uniforum.eth', position: getRandomWalkablePosition(), color: '#3b82f6', status: 'moving' },
+                    { id: 'demo2', name: 'sample.uniforum.eth', position: getRandomWalkablePosition(), color: '#10b981', status: 'moving' },
+                ]);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        
+        fetchAgents();
     }, []);
 
-    return { agents, setAgents };
+    // Forum-aware movement: agents in same forum cluster around creator
+    useEffect(() => {
+        if (forumTopics.length === 0) {
+            // No forums - random movement
+            const interval = setInterval(() => {
+                setAgents(prev => prev.map(a => {
+                if (a.status === 'discussing') return a;
+                const move = Math.random() > 0.95; // Only 5% chance to move each check (was 70%)
+                    if (!move) return a;
+                    const target = getRandomWalkablePosition();
+                    if (!target) return a;
+                    const path = findPath(a.position, target);
+                    if (path.length > 0) {
+                        return { ...a, status: 'moving', path };
+                    }
+                    return a;
+                }));
+            }, 2000);
+            return () => clearInterval(interval);
+        }
+
+        // Forum-based clustering
+        const interval = setInterval(() => {
+            setAgents(prev => {
+                // Build a map of agent ENS -> forums they're in
+                const agentForums = new Map<string, ForumTopic[]>();
+                forumTopics.forEach(topic => {
+                    if (!topic.isActive) return;
+                    topic.agents.forEach(agentEns => {
+                        const existing = agentForums.get(agentEns) || [];
+                        agentForums.set(agentEns, [...existing, topic]);
+                    });
+                });
+
+                return prev.map(agent => {
+                    const myForums = agentForums.get(agent.name) || [];
+                    
+                    if (myForums.length === 0) {
+                        // Not in any forum - check for expertise alignment with active forums
+                        // User Request: "move to the forum that is closest to the level of expertise"
+                        
+                        // Find active forums and their creators
+                        const activeForums = forumTopics.filter(f => f.isActive);
+                        
+                        if (activeForums.length > 0 && agent.expertise) {
+                             // Find best matching forum based on expertise string (Exact/Normalized Match)
+                             let bestForum: ForumTopic | null = null;
+                             let bestCreator: Agent | undefined = undefined;
+
+                             // Normalize my expertise
+                             const myExpertise = agent.expertise.trim().toLowerCase();
+
+                             for (const forum of activeForums) {
+                                 const creatorEns = forum.agents[0];
+                                 const creator = prev.find(a => a.name === creatorEns);
+                                 
+                                 if (creator && creator.expertise) {
+                                     // Check for match
+                                     const creatorExpertise = creator.expertise.trim().toLowerCase();
+                                     if (myExpertise === creatorExpertise) {
+                                         // Found a match!
+                                         bestForum = forum;
+                                         bestCreator = creator;
+                                         break; // Stop at first match (or could prioritize by activity if multiple matches)
+                                     }
+                                 }
+                             }
+
+                             // If we found a matching forum (and its creator is on canvas), move towards it
+                             if (bestForum && bestCreator) {
+                                  // Cluster loosely around this forum (lurk)
+                                  const agentIndex = prev.indexOf(agent); // Stable index for position
+                                  const angle = (agentIndex + Date.now()/10000) % (Math.PI * 2); 
+                                  const radius = 60 + (agentIndex % 3) * 15; // Further out than participants (35)
+                                  
+                                  const targetX = bestCreator.position.x + Math.cos(angle) * radius;
+                                  const targetY = bestCreator.position.y + Math.sin(angle) * radius;
+
+                                  // Find nearest walkable spot to the ideal target
+                                  const validTarget = getNearestWalkablePosition(targetX, targetY);
+
+                                  // Check distance
+                                  const dist = Math.hypot(agent.position.x - validTarget.x, agent.position.y - validTarget.y);
+                                  
+                                  if (dist < 20) {
+                                      return { ...agent, status: 'idle' };
+                                  }
+                                  
+                                  const path = findPath(agent.position, validTarget);
+                                  if (path.length > 0) {
+                                       return { ...agent, status: 'moving', path };
+                                  }
+                             }
+                        }
+
+
+                        // Fallback: Random movement if no matching forum found
+                        if (agent.status === 'discussing') {
+                            return { ...agent, status: 'idle', lastMessage: undefined };
+                        }
+                        const move = Math.random() > 0.95; // Only 5% chance to move each check (was 50%)
+                        if (!move || agent.path?.length) return agent;
+                        const target = getRandomWalkablePosition();
+                        if (!target) return agent;
+                        const path = findPath(agent.position, target);
+                        if (path.length > 0) {
+                            return { ...agent, status: 'moving', path };
+                        }
+                        return agent;
+                    }
+                    
+                    // Sort forums to prioritize active participation (Global Consensus)
+                    // Pick the forum with the most recent message activity AND closest expertise match
+                    myForums.sort((a, b) => {
+                         const timeA = a.messages.length > 0 ? new Date(a.messages[a.messages.length - 1].createdAt).getTime() : 0;
+                         const timeB = b.messages.length > 0 ? new Date(b.messages[b.messages.length - 1].createdAt).getTime() : 0;
+                         
+                         let scoreA = timeA;
+                         let scoreB = timeB;
+
+                         // Boost score if expertise matches
+                         if (agent.expertise) {
+                             const creatorA = prev.find(p => p.name === a.agents[0]);
+                             const creatorB = prev.find(p => p.name === b.agents[0]);
+                             
+                             const myExpertise = agent.expertise.trim().toLowerCase();
+
+                             if (creatorA?.expertise && creatorA.expertise.trim().toLowerCase() === myExpertise) {
+                                 scoreA += 3600000; // Add 1 hour priority for matching expertise
+                             }
+                             if (creatorB?.expertise && creatorB.expertise.trim().toLowerCase() === myExpertise) {
+                                  scoreB += 3600000;
+                             }
+                         }
+
+                         return scoreB - scoreA; // Descending order
+                    });
+                    
+                    // Agent is in a forum - find the creator (first participant) to cluster around
+                    const primaryForum = myForums[0];
+                    const creatorEns = primaryForum.agents[0]; // First participant is creator
+                    
+                    // Get latest message from this agent in the forum
+                    const myMessages = primaryForum.messages.filter(m => {
+                        // Soft matching for ENS names (case insensitive)
+                        return m.agent.toLowerCase() === agent.name.toLowerCase();
+                    });
+                    
+                    const latestMessage = myMessages.length > 0 
+                        ? myMessages[myMessages.length - 1].message.slice(0, 60) + (myMessages[myMessages.length - 1].message.length > 60 ? '...' : '')
+                        : undefined;
+                    
+                    // If this agent is the creator, stay put and discuss
+                    if (creatorEns === agent.name) {
+                        return {
+                            ...agent,
+                            status: 'discussing',
+                            path: [],
+                            lastMessage: latestMessage,
+                        };
+                    }
+                    
+                    // Find the creator agent's position
+                    const creatorAgent = prev.find(a => a.name === creatorEns);
+                    if (!creatorAgent) {
+                        // Creator not on canvas - random position
+                        return { ...agent, status: 'discussing', lastMessage: latestMessage };
+                    }
+                    
+                    // Calculate offset position around creator (cluster formation)
+                    const agentIndex = primaryForum.agents.indexOf(agent.name);
+                    const angle = (agentIndex / primaryForum.agents.length) * 2 * Math.PI;
+                    const radius = 35; // Distance from creator
+                    const targetX = creatorAgent.position.x + Math.cos(angle) * radius;
+                    const targetY = creatorAgent.position.y + Math.sin(angle) * radius;
+                    
+                    // Check if already close enough
+                    const dist = Math.hypot(agent.position.x - targetX, agent.position.y - targetY);
+                    if (dist < 15) {
+                        return {
+                            ...agent,
+                            status: 'discussing',
+                            path: [],
+                            lastMessage: latestMessage,
+                        };
+                    }
+                    
+                    // Move toward cluster position
+                    const validTarget = getNearestWalkablePosition(targetX, targetY);
+                    const path = findPath(agent.position, validTarget);
+                    // console.log(`[Canvas] Agent ${agent.name} moving to cluster - Target: ${validTarget.x},${validTarget.y}`);
+                    return {
+                        ...agent,
+                        status: 'moving',
+                        path: path.length > 0 ? path : [validTarget],
+                        lastMessage: latestMessage,
+                    };
+                });
+            });
+        }, 1500);
+        return () => clearInterval(interval);
+    }, [forumTopics]);
+
+    return { agents, setAgents, isLoading, error };
 };
 
 export const UniforumCanvas = () => {
@@ -62,89 +278,63 @@ export const UniforumCanvas = () => {
     const managerRef = useRef<CanvasManager | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     
-    // Data
-    const { agents, setAgents } = useCanvasData();
-    
-    // Forum Topics State
+    // Forum data - fetch first since agents need it for clustering
     const [forumTopics, setForumTopics] = useState<ForumTopic[]>([]);
-
-    // Interaction State
-    const isDragging = useRef(false);
-    const lastMousePos = useRef({ x: 0, y: 0 });
+    const [isLoadingForums, setIsLoadingForums] = useState(true);
     
-    // Forum topic titles - aligned with AGENTS.md terminology
-    const FORUM_TOPICS = [
-      "Proposal: Enable AntiSandwichHook for MEV protection",
-      "Fee tier vote - should we adjust to 0.3% base fee?",
-      "DynamicFee hook implementation for volatile periods",
-      "LimitOrderHook placement at key price ticks",
-      "Consensus: Increase liquidity in ETH-USDC pool",
-      "Impermanent loss mitigation with BaseAsyncSwap",
-      "Governance: LiquidityPenaltyHook for JIT protection",
-      "Strategy debate: Conservative vs aggressive rebalancing",
-      "Proposal: Cross-pool liquidity optimization on Unichain",
-      "Vote on BaseOverrideFee hook parameters",
-    ];
-    
-    // Callback to create forum topic when agents meet
-    const handleAgentMeeting = useCallback((meetingAgents: Agent[]) => {
-        const discussingAgents = meetingAgents.filter(a => a.status === 'discussing' && a.lastMessage);
-        
-        if (discussingAgents.length < 2) return;
-        
-        // Group agents by their discussionGroup (set by CanvasManager)
-        const groupedAgents = new Map<string, Agent[]>();
-        
-        discussingAgents.forEach(agent => {
-            const groupKey = (agent as any).discussionGroup || agent.id;
-            if (!groupedAgents.has(groupKey)) {
-                groupedAgents.set(groupKey, []);
-            }
-            groupedAgents.get(groupKey)!.push(agent);
-        });
-        
-        // Create/update forum for each group
-        groupedAgents.forEach((agents, groupKey) => {
-            if (agents.length < 2) return;
-            
-            const agentNames = agents.map(a => a.name);
-            
-            setForumTopics(prev => {
-                // Check if topic already exists for this group
-                const existingTopic = prev.find(t => 
-                    t.agents.sort().join('-') === agentNames.sort().join('-') && t.isActive
+    // Fetch real forums from API
+    useEffect(() => {
+        const fetchForums = async () => {
+            try {
+                setIsLoadingForums(true);
+                const response = await forumsApi.list({ limit: 20, status: 'active' });
+                
+                // Convert API forums to ForumTopic format
+                const topics: ForumTopic[] = await Promise.all(
+                    response.forums.map(async (forum) => {
+                        // Fetch messages for each forum
+                        let messages: { agent: string; message: string; createdAt: string }[] = [];
+                        try {
+                            const msgResponse = await forumsApi.getMessages(forum.id, { limit: 50 });
+                            messages = msgResponse.messages.map(msg => ({
+                                agent: msg.agentEns,
+                                message: msg.content,
+                                createdAt: msg.createdAt
+                            }));
+                        } catch (err) {
+                            console.error(`Failed to fetch messages for forum ${forum.id}:`, err);
+                        }
+                        
+                        return {
+                            id: forum.id,
+                            title: forum.title,
+                            agents: forum.participants,
+                            messages,
+                            timestamp: new Date(forum.createdAt),
+                            isActive: forum.status === 'active'
+                        };
+                    })
                 );
                 
-                if (existingTopic) {
-                    // Add new messages to existing topic
-                    const newMessages = agents
-                        .filter(a => a.lastMessage)
-                        .map(a => ({ agent: a.name, message: a.lastMessage as string }));
-                    
-                    return prev.map(t => 
-                        t.id === existingTopic.id 
-                            ? { ...t, messages: [...t.messages, ...newMessages] }
-                            : t
-                    );
-                }
-                
-                // Create new topic for this group
-                const topicTitle = FORUM_TOPICS[Math.floor(Math.random() * FORUM_TOPICS.length)];
-                const messages = agents
-                    .filter(a => a.lastMessage)
-                    .map(a => ({ agent: a.name, message: a.lastMessage as string }));
-                    
-                return [...prev, {
-                    id: `topic-${groupKey}-${Date.now()}`,
-                    title: topicTitle,
-                    agents: agentNames,
-                    messages: messages,
-                    timestamp: new Date(),
-                    isActive: true
-                }];
-            });
-        });
+                setForumTopics(topics);
+            } catch (err) {
+                console.error('Failed to fetch forums:', err);
+            } finally {
+                setIsLoadingForums(false);
+            }
+        };
+        
+        fetchForums();
+        
+        // Poll for updates every 10 seconds
+        const pollInterval = setInterval(fetchForums, 10000);
+        return () => clearInterval(pollInterval);
     }, []);
+    
+    // Agent data - now with forum-aware clustering
+    const { agents, setAgents } = useCanvasData(forumTopics);
+
+
 
     useEffect(() => {
         if (!canvasRef.current) return;
@@ -157,8 +347,7 @@ export const UniforumCanvas = () => {
             (updatedAgents) => {
                 // Sync status changes from CanvasManager back to React
                 setAgents(updatedAgents);
-                // Add to forum messages when agents meet
-                handleAgentMeeting(updatedAgents);
+                // Forums are now fetched from API (no longer generated locally)
             }
         );
         
