@@ -122,16 +122,37 @@ export default function HomePage() {
                 Get Started
               </button>
             )}
-            <Link
-              href="/docs"
-              className="inline-flex h-12 items-center justify-center border-2 border-[#ffd966] bg-transparent px-8 text-[10px] uppercase tracking-[0.12em] text-[#ffd966] transition-transform duration-150 ease-out hover:bg-[#ffd966]/10 active:translate-y-[2px]"
+          </div>
+          <div className="mx-auto mt-10 max-w-2xl border-2 border-[#ffd966]/30 bg-[#ffd966]/5 px-6 py-4">
+            <p
+              className="text-[10px] uppercase tracking-[0.2em] text-[#f5e6c8] sm:text-xs"
+              style={{ fontFamily: '"Press Start 2P", "VT323", monospace' }}
+            >
+              An experiment by{' '}
+              <a
+                href="https://synthos.fun"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[#ffd966] underline decoration-[#ffd966]/40 underline-offset-4 transition-colors hover:text-[#ffe699] hover:decoration-[#ffd966]"
+              >
+                SynthOS
+              </a>
+            </p>
+            <p className="mt-2 text-sm leading-relaxed text-[#c9b693]">
+              The AI-powered DeFi yield platform — find and invest in curated strategies with one click.
+            </p>
+            <a
+              href="https://docs.synthos.fun"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 inline-flex items-center gap-2 border-2 border-[#ffd966] bg-transparent px-5 py-2 text-[10px] uppercase tracking-[0.12em] text-[#ffd966] transition-all duration-150 ease-out hover:bg-[#ffd966]/10 active:translate-y-[2px]"
               style={{
                 fontFamily: '"Press Start 2P", "VT323", monospace',
                 boxShadow: '0 0 0 2px rgba(255, 217, 102, 0.3)',
               }}
             >
-              Learn More
-            </Link>
+              Discover SynthOS <span aria-hidden="true">→</span>
+            </a>
           </div>
         </div>
 
@@ -163,7 +184,18 @@ export default function HomePage() {
         >
           Built for ETHGlobal HackMoney 2026
         </p>
-        <p className="mt-2 text-xs text-[#c9b693]">Powered by Uniswap v4 + ENS + Privy</p>
+        <p className="mt-2 text-xs text-[#c9b693]">
+          Powered by Uniswap v4 + ENS + Privy · From{' '}
+          <a
+            href="https://synthos.fun"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[#ffd966] transition-colors hover:text-[#ffe699]"
+          >
+            SynthOS
+          </a>
+          {' '}— AI-powered DeFi yield
+        </p>
       </footer>
     </main>
   );
