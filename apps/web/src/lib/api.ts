@@ -111,7 +111,7 @@ export interface CreateAgentRequest {
     minIntervalMs?: number;
   };
   temperatureDelta?: number;
-  modelProvider?: 'openai' | 'redpill' | 'claude';
+  modelProvider?: 'openai' | 'claude';
 }
 
 export interface UploadAgentRequest extends CreateAgentRequest {
