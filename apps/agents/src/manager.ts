@@ -6,7 +6,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { ElizaOS } from '@elizaos/core';
+import { ElizaOS, type IAgentRuntime } from '@elizaos/core';
 import type { Database } from '@uniforum/shared/types/database';
 import type { Forum, ForumMessage } from '@uniforum/shared/types/forum';
 import type { ExecutionPayload, Proposal } from '@uniforum/shared/types/proposal';
@@ -41,6 +41,14 @@ export class AgentManager {
     }
   > = new Map();
   private proposalCooldown: Map<string, number> = new Map();
+  /** Track recently processed message IDs to prevent duplicate Realtime events */
+  private processedMessageIds: Set<string> = new Set();
+  /**
+   * Prevent concurrent Eliza handleMessage calls for the same agent+forum pair.
+   * Eliza uses a per-room responseId that gets overwritten by concurrent calls,
+   * causing both to return didRespond: false.
+   */
+  private agentForumLocks: Set<string> = new Set();
 
   constructor(supabase: SupabaseClient<Database>) {
     this.supabase = supabase;
@@ -52,6 +60,15 @@ export class AgentManager {
     if (!raw) return fallback;
     const parsed = parseInt(raw, 10);
     return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  /**
+   * Get the Eliza runtime for an agent, enabling direct generateText calls
+   * that bypass the handleMessage/shouldRespond pipeline.
+   */
+  private getAgentRuntime(agent: AgentInstance): IAgentRuntime | null {
+    if (!agent.agentId) return null;
+    return this.eliza.getAgent(agent.agentId) ?? null;
   }
 
   private getDebateTiming(debateConfig?: {
@@ -66,8 +83,8 @@ export class AgentManager {
     const configuredRounds =
       typeof debateConfig?.rounds === 'number' ? debateConfig.rounds : 2;
 
-    const defaultMinDuration = this.readIntEnv('DEBATE_MIN_DURATION_MS', 60_000);
-    const defaultMaxRounds = this.readIntEnv('DEBATE_MAX_ROUNDS', 12);
+    const defaultMinDuration = this.readIntEnv('DEBATE_MIN_DURATION_MS', 0);
+    const defaultMaxRounds = this.readIntEnv('DEBATE_MAX_ROUNDS', 2);
 
     const minDurationMs =
       typeof debateConfig?.minDurationMs === 'number'
@@ -98,19 +115,51 @@ export class AgentManager {
   }
 
   private extractResponseText(
-    result: Awaited<ReturnType<ElizaOS['handleMessage']>> | null | undefined
+    result: Awaited<ReturnType<ElizaOS['handleMessage']>> | null | undefined,
+    agentLabel?: string
   ): string | null {
+    // 1. Direct text in responseContent
     const direct = result?.processing?.responseContent?.text;
     if (typeof direct === 'string' && direct.trim()) {
       return direct.trim();
     }
 
+    // 2. From responseMessages array
     const fromMessages = result?.processing?.responseMessages?.find(
       (message) => typeof message?.content?.text === 'string' && message.content.text.trim()
     )?.content?.text;
 
     if (typeof fromMessages === 'string' && fromMessages.trim()) {
       return fromMessages.trim();
+    }
+
+    // 3. Try extracting text from XML <text> tags in the raw response
+    // Eliza sometimes wraps responses in XML tags: <response><text>...</text></response>
+    const rawResponse = result?.processing?.responseContent?.text
+      || result?.processing?.responseMessages?.[0]?.content?.text
+      || result?.processing?.responseMessages?.[0]?.content?.body;
+    if (typeof rawResponse === 'string') {
+      const xmlTextMatch = rawResponse.match(/<text>([\s\S]*?)<\/text>/);
+      if (xmlTextMatch?.[1]?.trim()) {
+        return xmlTextMatch[1].trim();
+      }
+    }
+
+    // 4. Check for text at the top level of the result (some Eliza versions)
+    const topLevel = (result as any)?.text || (result as any)?.content?.text;
+    if (typeof topLevel === 'string' && topLevel.trim()) {
+      return topLevel.trim();
+    }
+
+    // Log the structure for debugging
+    if (agentLabel) {
+      const keys = result ? Object.keys(result) : [];
+      const processingKeys = result?.processing ? Object.keys(result.processing) : [];
+      console.log(`[agents] ${agentLabel} response structure: top=[${keys}] processing=[${processingKeys}]`);
+      if (result?.processing?.responseMessages?.length) {
+        const firstMsg = result.processing.responseMessages[0];
+        console.log(`[agents] ${agentLabel} first responseMessage keys: [${firstMsg ? Object.keys(firstMsg) : 'none'}], content keys: [${firstMsg?.content ? Object.keys(firstMsg.content) : 'none'}]`);
+      }
     }
 
     return null;
@@ -123,7 +172,10 @@ export class AgentManager {
     type: 'discussion' | 'proposal' | 'vote' | 'result';
     metadata?: Record<string, unknown> | null;
   }): Promise<boolean> {
-    const { error } = await this.supabase.from('messages').insert(payload);
+    // Tag all agent-service-generated messages so we can distinguish them
+    // from user-initiated messages in the Realtime handler.
+    const metadata = { ...payload.metadata, source: 'agent-service' };
+    const { error } = await this.supabase.from('messages').insert({ ...payload, metadata });
     if (error) {
       console.error('[agents] Failed to save message:', error);
       return false;
@@ -213,6 +265,9 @@ export class AgentManager {
         `[agents] No AI provider API key set (OPENAI_API_KEY, REDPILL_API_KEY, or CLAUDE_API_KEY). Agent ${ensName} will not be able to generate responses.`
       );
     }
+
+    // Log key character config for debugging shouldRespond / provider issues
+    console.log(`[agents] ${ensName} config: ALWAYS_RESPOND_SOURCES=${character.settings?.ALWAYS_RESPOND_SOURCES}, templates=${Object.keys(character.templates || {}).join(',') || 'none'}, model=${character.settings?.model}`);
 
     const agentIds = await this.eliza.addAgents(
       [
@@ -363,6 +418,35 @@ export class AgentManager {
    * Handle new message in a forum
    */
   private async handleNewMessage(message: any): Promise<void> {
+    const msgId = message.id;
+    const meta = message.metadata;
+
+    // Deduplicate: Supabase Realtime can deliver the same event multiple times
+    if (msgId && this.processedMessageIds.has(msgId)) {
+      return;
+    }
+    if (msgId) {
+      this.processedMessageIds.add(msgId);
+      // Evict old IDs after 60 s to avoid unbounded memory growth
+      setTimeout(() => this.processedMessageIds.delete(msgId), 60_000);
+    }
+
+    // Skip debate follow-up messages — they are part of an ongoing debate loop
+    // and should NOT start new discussion chains for other agents.
+    if (meta && typeof meta === 'object' && typeof meta.debateRound === 'number') {
+      console.log(`[agents] Skipping debate follow-up (round ${meta.debateRound}) in forum ${message.forum_id}`);
+      return;
+    }
+
+    // Skip messages inserted by Eliza internally (e.g. chain continuations).
+    // These are duplicates of messages we already handle via handleMessage().
+    if (meta && typeof meta === 'object' && meta.chain === true) {
+      console.log(`[agents] Skipping Eliza-internal chain message in forum ${message.forum_id}`);
+      return;
+    }
+
+    console.log(`[agents] Processing message in forum ${message.forum_id} (agent_id=${message.agent_id}, source=${meta?.source || 'user'}, metadata=${JSON.stringify(meta)})`);
+
     // Get agents participating in this forum
     const { data: participants } = await this.supabase
       .from('forum_participants')
@@ -370,7 +454,12 @@ export class AgentManager {
       .eq('forum_id', message.forum_id)
       .eq('is_active', true);
 
-    if (!participants) return;
+    if (!participants) {
+      console.log(`[agents] No participants found for forum ${message.forum_id}`);
+      return;
+    }
+
+    console.log(`[agents] Forum ${message.forum_id} has ${participants.length} active participants: ${participants.map((p) => (p.agents as any)?.full_ens_name).join(', ')}`);
 
     const tasks: Promise<void>[] = [];
 
@@ -379,11 +468,18 @@ export class AgentManager {
       if (!ensName) continue;
 
       // Don't respond to own messages
-      if (message.agent_id === participant.agent_id) continue;
+      if (message.agent_id === participant.agent_id) {
+        console.log(`[agents] ${ensName} skipped: own message`);
+        continue;
+      }
 
       const agent = this.agents.get(ensName);
-      if (!agent) continue;
+      if (!agent) {
+        console.log(`[agents] ${ensName} skipped: not in agents map`);
+        continue;
+      }
 
+      console.log(`[agents] Dispatching discussion to ${ensName}`);
       tasks.push(this.handleForumDiscussion(agent, message));
     }
 
@@ -392,6 +488,9 @@ export class AgentManager {
       const failures = results.filter((result) => result.status === 'rejected');
       if (failures.length > 0) {
         console.warn(`[agents] Discussion processing had ${failures.length} failures`);
+        for (const f of failures) {
+          if (f.status === 'rejected') console.error('[agents] Failure:', f.reason);
+        }
       }
     }
   }
@@ -463,13 +562,26 @@ export class AgentManager {
   }
 
   private async handleForumDiscussion(agent: AgentInstance, message: any): Promise<void> {
-    if (!agent.agentId) {
-      console.warn(`[agents] Agent ${agent.ensName} missing Eliza agentId, skipping response.`);
+    const runtime = this.getAgentRuntime(agent);
+    if (!runtime) {
+      console.warn(`[agents] Agent ${agent.ensName} missing Eliza runtime, skipping response.`);
       return;
     }
 
+    // Prevent concurrent calls for the same agent+forum.
+    const lockKey = `${agent.id}:${message.forum_id}`;
+    if (this.agentForumLocks.has(lockKey)) {
+      console.log(`[agents] ${agent.ensName} already processing forum ${message.forum_id}, skipping duplicate`);
+      return;
+    }
+    this.agentForumLocks.add(lockKey);
+
+    try {
     const forum = await this.fetchForum(message.forum_id);
-    if (!forum) return;
+    if (!forum) {
+      console.log(`[agents] ${agent.ensName}: forum not found for ${message.forum_id}`);
+      return;
+    }
 
     const recentMessages = await this.fetchRecentMessages(message.forum_id);
     const agentContext = this.buildAgentDiscussionContext(agent);
@@ -477,11 +589,14 @@ export class AgentManager {
     const debateTiming = this.getDebateTiming(agentContext.debate);
     const participation = shouldParticipate(agentContext, forum, recentMessages, {
       minIntervalMs: agentContext.debate?.enabled ? debateTiming.minIntervalMs : undefined,
+      maxAutoMessages: debateTiming.maxRounds + 1, // 1 initial reply + maxRounds debate messages
     });
     if (!participation.should) {
       console.log(`[agents] ${agent.ensName} skipped discussion: ${participation.reason}`);
       return;
     }
+
+    console.log(`[agents] ${agent.ensName} participating: ${participation.reason}`);
 
     const poolSnapshot = await getPoolSnapshot(forum.pool);
     const prompt = buildDiscussionPrompt(agentContext, {
@@ -490,17 +605,21 @@ export class AgentManager {
       poolSnapshot,
     });
 
-    const response = await this.eliza.handleMessage(agent.agentId, {
-      entityId: message.agent_id || message.id,
-      roomId: message.forum_id,
-      content: {
-        text: prompt,
-        source: 'uniforum',
-      },
-    });
+    let text: string | null = null;
+    try {
+      console.log(`[agents] ${agent.ensName} generating discussion response (agentId=${agent.agentId})...`);
+      const result = await runtime.generateText(prompt, { includeCharacter: true });
+      text = result.text?.trim() || null;
+      console.log(`[agents] ${agent.ensName} generateText returned: ${text ? 'text (' + text.length + ' chars)' : 'empty'}`);
+    } catch (err) {
+      console.error(`[agents] ${agent.ensName} generateText FAILED:`, err);
+      return;
+    }
 
-    const text = this.extractResponseText(response);
-    if (!text) return;
+    if (!text) {
+      console.log(`[agents] ${agent.ensName}: no text generated`);
+      return;
+    }
 
     const saved = await this.insertForumMessage({
       forum_id: message.forum_id,
@@ -518,16 +637,19 @@ export class AgentManager {
 
     await this.maybeAutoPropose(agent, forum, agentContext, recentMessages, poolSnapshot);
 
-    void this
-      .handleDebateFollowUp(agent, message, forum, agentContext, recentMessages, poolSnapshot)
-      .catch((error) => {
-        console.error('[agents] Debate follow-up error:', error);
-      });
+    // NOTE: We intentionally do NOT call handleDebateFollowUp here.
+    // Cross-agent debate happens naturally: when this agent's reply is inserted,
+    // the Supabase Realtime subscription fires handleNewMessage for OTHER agents,
+    // creating an organic back-and-forth debate without self-monologuing.
+    } finally {
+      this.agentForumLocks.delete(lockKey);
+    }
   }
 
   private async handleForumProposal(agent: AgentInstance, proposal: any): Promise<void> {
-    if (!agent.agentId) {
-      console.warn(`[agents] Agent ${agent.ensName} missing Eliza agentId, skipping vote.`);
+    const voteRuntime = this.getAgentRuntime(agent);
+    if (!voteRuntime) {
+      console.warn(`[agents] Agent ${agent.ensName} missing Eliza runtime, skipping vote.`);
       return;
     }
 
@@ -552,16 +674,9 @@ export class AgentManager {
 
     if (!vote) {
       const prompt = buildVoteEvaluationPrompt(normalizedProposal, agentContext);
-      const response = await this.eliza.handleMessage(agent.agentId, {
-        entityId: proposal.creator_agent_id || proposal.id,
-        roomId: proposal.forum_id,
-        content: {
-          text: prompt,
-          source: 'uniforum',
-        },
-      });
+      const result = await voteRuntime.generateText(prompt, { includeCharacter: true });
 
-      const text = this.extractResponseText(response) || '';
+      const text = result.text?.trim() || '';
       const lowered = text.toLowerCase();
       if (lowered.startsWith('agree')) {
         vote = 'agree';
@@ -661,16 +776,10 @@ export class AgentManager {
         poolSnapshot: latestPoolSnapshot ?? poolSnapshot,
       });
 
-      const response = await this.eliza.handleMessage(agent.agentId!, {
-        entityId: message.agent_id || message.id,
-        roomId: message.forum_id,
-        content: {
-          text: debatePrompt,
-          source: 'uniforum',
-        },
-      });
-
-      const text = this.extractResponseText(response);
+      const debateRuntime = this.getAgentRuntime(agent);
+      if (!debateRuntime) continue;
+      const debateResult = await debateRuntime.generateText(debatePrompt, { includeCharacter: true });
+      const text = debateResult.text?.trim() || null;
       if (!text) continue;
 
       const saved = await this.insertForumMessage({
@@ -705,7 +814,8 @@ export class AgentManager {
     recentMessages: ForumMessage[],
     poolSnapshot?: Record<string, unknown> | null
   ): Promise<void> {
-    if (!agent.agentId) return;
+    const proposalRuntime = this.getAgentRuntime(agent);
+    if (!proposalRuntime) return;
 
     const creatorEns = forum.creatorEnsName || '';
     if (!creatorEns || creatorEns.toLowerCase() !== agent.ensName.toLowerCase()) {
@@ -736,16 +846,8 @@ export class AgentManager {
       poolSnapshot,
     });
 
-    const response = await this.eliza.handleMessage(agent.agentId, {
-      entityId: forum.id,
-      roomId: forum.id,
-      content: {
-        text: prompt,
-        source: 'uniforum',
-      },
-    });
-
-    const text = this.extractResponseText(response);
+    const result = await proposalRuntime.generateText(prompt, { includeCharacter: true });
+    const text = result.text?.trim() || null;
     if (!text) return;
 
     const proposalPayload = parseProposalJson(text);
@@ -1125,7 +1227,7 @@ export class AgentManager {
       .select('id, forum_id, agent_id, content, type, metadata, created_at, agents(full_ens_name)')
       .eq('forum_id', forumId)
       .order('created_at', { ascending: false })
-      .limit(8);
+      .limit(20);
 
     if (!messages) return [];
 
