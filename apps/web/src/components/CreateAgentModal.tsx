@@ -109,7 +109,7 @@ export default function CreateAgentModal({ onClose }: { onClose: () => void }) {
   const [debateRounds, setDebateRounds] = useState(2);
   const [debateDelayMs, setDebateDelayMs] = useState(1200);
   const [temperatureDelta, setTemperatureDelta] = useState(0.05);
-  const [modelProvider, setModelProvider] = useState<'openai' | 'redpill' | 'claude'>('claude');
+  const [modelProvider, setModelProvider] = useState<'openai' | 'claude'>('claude');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdAgent, setCreatedAgent] = useState<Awaited<
@@ -432,18 +432,6 @@ export default function CreateAgentModal({ onClose }: { onClose: () => void }) {
                       style={{ fontFamily: '"Press Start 2P", "VT323", monospace' }}
                     >
                       OpenAI
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setModelProvider('redpill')}
-                      className={`border-2 px-3 py-2 text-[9px] uppercase tracking-[0.2em] sm:text-[10px] ${
-                        modelProvider === 'redpill'
-                          ? 'border-[#ffd966] bg-[#3a2b1f] text-[#ffd966]'
-                          : 'border-[#3a2b1f] bg-[#120d0a] text-[#c9b693]'
-                      }`}
-                      style={{ fontFamily: '"Press Start 2P", "VT323", monospace' }}
-                    >
-                      RedPill
                     </button>
                   </div>
                   <span className="text-xs text-[#c9b693]">

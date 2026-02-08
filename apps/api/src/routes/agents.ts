@@ -78,7 +78,7 @@ const createAgentSchema = z.object({
     })
     .optional(),
   temperatureDelta: z.number().min(-0.2).max(0.2).optional(),
-  modelProvider: z.enum(['openai', 'redpill', 'claude']).optional(),
+  modelProvider: z.enum(['openai', 'claude']).optional(),
 });
 
 const updateAgentSchema = z.object({
@@ -192,7 +192,7 @@ function sanitizeCharacterConfig(input: Record<string, any>) {
   }
 
   if (typeof (input as any).modelProvider === 'string') {
-    const validProviders = ['openai', 'redpill', 'claude'];
+    const validProviders = ['openai', 'claude'];
     if (validProviders.includes((input as any).modelProvider)) {
       sanitized.modelProvider = (input as any).modelProvider;
     }
@@ -208,7 +208,12 @@ function normalizePlugins(plugins: string[] | undefined) {
 
   const required = new Set(filtered);
   required.add('@elizaos/plugin-node');
-  if (process.env.OPENAI_API_KEY) {
+  // Add Anthropic plugin when Claude key is available (preferred)
+  if (process.env.CLAUDE_API_KEY) {
+    required.add('@elizaos/plugin-anthropic');
+  }
+  // Add OpenAI plugin only when Claude is NOT available
+  if (process.env.OPENAI_API_KEY && !process.env.CLAUDE_API_KEY) {
     required.add('@elizaos/plugin-openai');
   }
 

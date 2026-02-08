@@ -217,14 +217,14 @@ function buildDefaultPlugins(plugins?: string[]): string[] {
   } else {
     set.add('@elizaos/plugin-sql');
   }
-  // Add OpenAI plugin if either OpenAI or RedPill API key is available
-  // (RedPill uses OpenAI-compatible API)
-  if (process.env.OPENAI_API_KEY || process.env.REDPILL_API_KEY) {
-    set.add('@elizaos/plugin-openai');
-  }
-  // Add Anthropic plugin if Claude API key is available
+  // Add Anthropic plugin if Claude API key is available (preferred)
   if (process.env.CLAUDE_API_KEY) {
     set.add('@elizaos/plugin-anthropic');
+  }
+  // Add OpenAI plugin only when Claude is NOT available
+  // (avoids @ai-sdk/openai v2 Responses API conflicts with non-OpenAI providers)
+  if (process.env.OPENAI_API_KEY && !process.env.CLAUDE_API_KEY) {
+    set.add('@elizaos/plugin-openai');
   }
   return Array.from(set);
 }
@@ -261,8 +261,7 @@ function extractAgentHeuristics(config: AgentConfig) {
       ? (fromUpload as any).modelProvider
       : getDefaultModelProvider();
 
-  // RedPill is incompatible with @ai-sdk/openai v2.0.89 (uses Responses API
-  // which RedPill doesn't support). Fall back to Claude when available.
+  // Normalize any legacy 'redpill' values to a supported provider
   if (modelProvider === 'redpill') {
     modelProvider = process.env.CLAUDE_API_KEY ? 'claude' : 'openai';
   }
@@ -336,13 +335,9 @@ function clamp(value: number, min: number, max: number) {
 
 /**
  * Get default model provider based on available API keys.
- *
- * Note: RedPill is excluded because @ai-sdk/openai v2.0.89 defaults to
- * the Responses API (/v1/responses) which RedPill does not support.
- * Agents that would use RedPill fall back to Claude instead.
+ * Priority: Claude > OpenAI.
  */
 function getDefaultModelProvider(): string {
-  // Priority: Claude > OpenAI (RedPill excluded — see note above)
   if (process.env.CLAUDE_API_KEY) {
     return 'claude';
   }
@@ -354,16 +349,12 @@ function getDefaultModelProvider(): string {
 
 /**
  * Get model name based on provider.
- * RedPill falls back to Claude (see getDefaultModelProvider note).
  */
 function getModelForProvider(provider?: string): string {
   const actualProvider = provider || getDefaultModelProvider();
 
   switch (actualProvider.toLowerCase()) {
     case 'claude':
-    case 'redpill':
-      // RedPill falls back to Claude — @ai-sdk/openai v2.0.89 uses the
-      // Responses API which RedPill does not support.
       return process.env.CLAUDE_MODEL || 'claude-3-5-sonnet-20241022';
     case 'openai':
     default:
@@ -378,21 +369,11 @@ function getModelForProvider(provider?: string): string {
  * can initialise properly.  The `modelProvider` hint only decides which
  * provider is *preferred*; plugins for other providers may still be loaded
  * and will fall back to process.env if a key is missing from secrets.
- *
- * For the RedPill provider we must also set OPENAI_BASE_URL so the OpenAI
- * plugin sends requests to the RedPill endpoint instead of api.openai.com.
  */
 function getSecretsForProvider(provider?: string): Record<string, string | undefined> {
-  const actualProvider = (provider || getDefaultModelProvider()).toLowerCase();
-
   // Always expose Anthropic key when available (plugin checks this, not CLAUDE_API_KEY)
   const anthropicKey = process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY;
 
-  // RedPill base URL — configurable via env, defaults to public endpoint
-  const redpillBaseUrl =
-    process.env.REDPILL_BASE_URL || 'https://api.red-pill.ai/v1';
-
-  // Start with all available provider keys
   const secrets: Record<string, string | undefined> = {};
 
   // Anthropic / Claude
@@ -401,29 +382,9 @@ function getSecretsForProvider(provider?: string): Record<string, string | undef
     secrets.CLAUDE_API_KEY = anthropicKey;
   }
 
-  // OpenAI key — expose if available (but never redirect to RedPill's
-  // base URL, since @ai-sdk/openai v2.0.89 uses the Responses API).
-  switch (actualProvider) {
-    case 'redpill':
-      // RedPill falls back to Claude. Do NOT set OPENAI_BASE_URL to
-      // RedPill — the Responses API endpoint is unsupported there.
-      if (process.env.OPENAI_API_KEY) {
-        secrets.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-      }
-      break;
-
-    case 'openai':
-    default:
-      if (process.env.OPENAI_API_KEY) {
-        secrets.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-      }
-      break;
-
-    case 'claude':
-      if (process.env.OPENAI_API_KEY) {
-        secrets.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-      }
-      break;
+  // OpenAI
+  if (process.env.OPENAI_API_KEY) {
+    secrets.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
   }
 
   return secrets;

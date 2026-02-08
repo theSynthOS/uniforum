@@ -260,9 +260,9 @@ export class AgentManager {
     const resolvedPlugins = disableNodePlugin
       ? pluginList.filter((plugin) => plugin !== '@elizaos/plugin-node')
       : pluginList;
-    if (!process.env.OPENAI_API_KEY && !process.env.REDPILL_API_KEY && !process.env.CLAUDE_API_KEY) {
+    if (!process.env.OPENAI_API_KEY && !process.env.CLAUDE_API_KEY) {
       console.warn(
-        `[agents] No AI provider API key set (OPENAI_API_KEY, REDPILL_API_KEY, or CLAUDE_API_KEY). Agent ${ensName} will not be able to generate responses.`
+        `[agents] No AI provider API key set (OPENAI_API_KEY or CLAUDE_API_KEY). Agent ${ensName} will not be able to generate responses.`
       );
     }
 
