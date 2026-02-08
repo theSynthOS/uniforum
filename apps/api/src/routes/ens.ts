@@ -4,14 +4,18 @@ import { buildEnsTextRecords, ENS_TEXT_KEYS } from '@uniforum/contracts';
 import { ENS_CONFIG } from '@uniforum/shared';
 import {
   decodeFunctionData,
+  decodeFunctionResult,
   encodeAbiParameters,
   encodeFunctionResult,
   encodePacked,
+  encodeFunctionData,
   keccak256,
   isAddress,
   namehash,
   toBytes,
   toHex,
+  createPublicClient,
+  http,
 } from 'viem';
 import { secp256k1 } from '@noble/curves/secp256k1';
 
@@ -103,6 +107,18 @@ const ADDR_SELECTOR = '0x3b3b57de';
 const ADDR_COIN_SELECTOR = '0xf1cb7e06';
 const TEXT_SELECTOR = '0x59d1d43c';
 const CONTENTHASH_SELECTOR = '0xbc1c58d1';
+const RESOLVE_WITH_PROOF_ABI = [
+  {
+    type: 'function',
+    name: 'resolveWithProof',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'response', type: 'bytes' },
+      { name: 'extraData', type: 'bytes' },
+    ],
+    outputs: [{ name: 'result', type: 'bytes' }],
+  },
+] as const;
 
 function decodeDnsName(encoded: Uint8Array): string {
   const labels: string[] = [];
@@ -115,6 +131,17 @@ function decodeDnsName(encoded: Uint8Array): string {
     offset += len + 1;
   }
   return labels.join('.');
+}
+
+function encodeDnsName(name: string): `0x${string}` {
+  const labels = name.split('.');
+  const bytes: number[] = [];
+  for (const label of labels) {
+    const enc = new TextEncoder().encode(label);
+    bytes.push(enc.length, ...enc);
+  }
+  bytes.push(0);
+  return `0x${Buffer.from(bytes).toString('hex')}` as `0x${string}`;
 }
 
 function buildSignatureHash(
@@ -257,7 +284,7 @@ async function resolveRecord(name: string, data: `0x${string}`) {
     const result = encodeFunctionResult({
       abi: ADDR_ABI,
       functionName: 'addr',
-      result: [safeWalletAddress as `0x${string}`],
+      result: safeWalletAddress as `0x${string}`,
     });
     return { result, fullName: full };
   }
@@ -274,7 +301,7 @@ async function resolveRecord(name: string, data: `0x${string}`) {
     const result = encodeFunctionResult({
       abi: ADDR_COIN_ABI,
       functionName: 'addr',
-      result: [addressBytes],
+      result: addressBytes,
     });
     return { result, fullName: full };
   }
@@ -287,7 +314,7 @@ async function resolveRecord(name: string, data: `0x${string}`) {
       const empty = encodeFunctionResult({
         abi: TEXT_ABI,
         functionName: 'text',
-        result: [''],
+        result: '',
       });
       return { result: empty, fullName: full };
     }
@@ -295,7 +322,7 @@ async function resolveRecord(name: string, data: `0x${string}`) {
     const result = encodeFunctionResult({
       abi: TEXT_ABI,
       functionName: 'text',
-      result: [value],
+      result: value,
     });
     return { result, fullName: full };
   }
@@ -307,14 +334,14 @@ async function resolveRecord(name: string, data: `0x${string}`) {
       const empty = encodeFunctionResult({
         abi: CONTENTHASH_ABI,
         functionName: 'contenthash',
-        result: ['0x'],
+        result: '0x',
       });
       return { result: empty, fullName: full };
     }
     const empty = encodeFunctionResult({
       abi: CONTENTHASH_ABI,
       functionName: 'contenthash',
-      result: ['0x'],
+      result: '0x',
     });
     return { result: empty, fullName: full };
   }
@@ -517,6 +544,84 @@ ensRoutes.get('/address/:name', async (c) => {
   return c.json({
     name: ensName,
     address: walletAddress,
+  });
+});
+
+// GET /ens/verify/:name - Verify CCIP-Read resolution via resolveWithProof
+ensRoutes.get('/verify/:name', async (c) => {
+  const name = c.req.param('name');
+  const { full: ensName } = normalizeEnsInput(name);
+
+  const resolverAddress = "0x2846431C50663E1Afc306074FDf3EfC894683ed5";
+  const gatewayUrl = "https://api-uniforum.up.railway.app/v1/ens/ccip"
+  const rpcUrl = "https://sepolia.drpc.org";
+
+  if (!resolverAddress || !gatewayUrl || !rpcUrl) {
+    return c.json(
+      { error: 'Missing ENS_OFFCHAIN_RESOLVER_ADDRESS, ENS_CCIP_GATEWAY_URL, or RPC URL' },
+      500
+    );
+  }
+
+  const dns = encodeDnsName(ensName);
+  const node = namehash(ensName);
+  const addrData = encodeFunctionData({
+    abi: ADDR_ABI,
+    functionName: 'addr',
+    args: [node],
+  });
+  const callData = encodeFunctionData({
+    abi: RESOLVE_ABI,
+    functionName: 'resolve',
+    args: [dns, addrData],
+  });
+
+  let responseData: `0x${string}` | undefined;
+  const url = `${gatewayUrl}?sender=${resolverAddress}&data=${callData}`;
+  let res = await fetch(url);
+  if (!res.ok) {
+    res = await fetch(gatewayUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sender: resolverAddress, data: callData }),
+    });
+  }
+  if (!res.ok) {
+    return c.json({ error: 'Gateway error', status: res.status }, 502);
+  }
+  try {
+    const json = (await res.json()) as { data?: `0x${string}`; result?: `0x${string}` };
+    responseData = json.data || json.result;
+  } catch {
+    return c.json({ error: 'Gateway returned invalid JSON' }, 502);
+  }
+  if (!responseData) {
+    return c.json({ error: 'Gateway response missing data' }, 502);
+  }
+
+  const extraData = encodeAbiParameters(
+    [{ type: 'bytes' }, { type: 'address' }],
+    [callData, resolverAddress as `0x${string}`]
+  );
+
+  const client = createPublicClient({ transport: http(rpcUrl) });
+  const result = await client.readContract({
+    address: resolverAddress as `0x${string}`,
+    abi: RESOLVE_WITH_PROOF_ABI,
+    functionName: 'resolveWithProof',
+    args: [responseData, extraData],
+  });
+
+  const decoded = decodeFunctionResult({
+    abi: ADDR_ABI,
+    functionName: 'addr',
+    data: result,
+  }) as readonly [`0x${string}`];
+
+  return c.json({
+    ok: true,
+    name: ensName,
+    address: decoded[0],
   });
 });
 
