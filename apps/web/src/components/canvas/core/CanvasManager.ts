@@ -178,7 +178,7 @@ export class CanvasManager {
   }
 
   // Exposed for the React component to call on events
-  public handleMouseDown(x: number, y: number) {
+  public handleMouseDown(_x: number, _y: number) {
       // Pan start logic could go here if managed internally
   }
 
