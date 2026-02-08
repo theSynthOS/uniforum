@@ -123,9 +123,9 @@ proposalsRoutes.get('/:proposalId/execution-payload', async (c) => {
     return c.json({ error: 'Proposal not found' }, 404);
   }
 
-  if (proposal.status !== 'approved') {
+  if (proposal.status !== 'approved' && proposal.status !== 'executing') {
     return c.json(
-      { error: 'Proposal is not approved; only approved proposals have an execution payload' },
+      { error: 'Proposal is not approved; only approved/executing proposals have an execution payload' },
       400
     );
   }

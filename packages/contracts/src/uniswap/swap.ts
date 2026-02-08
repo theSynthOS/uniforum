@@ -7,10 +7,20 @@
  */
 
 import type { Hash } from 'viem';
+import { parseUnits } from 'viem';
 import { unichainSepolia, unichainMainnet } from '../chains';
 import { createUniswapClients, getUniswapAddresses } from './client';
 import { buildV4SingleHopSwapCalldata } from './v4SwapCalldata';
 import type { SwapParams, ProposalHooks } from '@uniforum/shared';
+
+/** Convert a human-readable amount (e.g. "1.2") to wei string for the given decimals */
+function toWei(amount: string, decimals: number = 18): string {
+  try {
+    return parseUnits(amount, decimals).toString();
+  } catch {
+    return amount; // already in wei or unparseable — pass through
+  }
+}
 
 /** True if address is configured (42-char hex), not a placeholder like 0x... */
 function isConfiguredAddress(addr: string): boolean {
@@ -83,6 +93,19 @@ export async function executeSwap(options: ExecuteSwapOptions): Promise<SwapResu
 
     const deadline = BigInt(swapParams.deadline || Math.floor(Date.now() / 1000) + 1800);
 
+    // Convert human-readable amounts to wei
+    // ETH and most tokens use 18 decimals; USDC/USDT use 6
+    const tokenInUpper = (swapParams.tokenIn || '').toUpperCase();
+    const tokenOutUpper = (swapParams.tokenOut || '').toUpperCase();
+    const inDecimals = ['USDC', 'USDT'].includes(tokenInUpper) ? 6 : 18;
+    const outDecimals = ['USDC', 'USDT'].includes(tokenOutUpper) ? 6 : 18;
+    // Hardcode ETH amount to 0.01 ETH for safety
+    const rawAmount = tokenInUpper === 'ETH' ? '0.01' : swapParams.amount;
+    const amountInWei = toWei(rawAmount, inDecimals);
+    const amountOutMinWei = swapParams.amountOutMinimum
+      ? toWei(swapParams.amountOutMinimum, outDecimals)
+      : '0';
+
     let commands: `0x${string}`;
     let inputs: `0x${string}`[];
     const zeroForOne = swapParams.zeroForOne ?? true;
@@ -103,8 +126,8 @@ export async function executeSwap(options: ExecuteSwapOptions): Promise<SwapResu
           hooks: swapParams.hooksAddress,
         },
         zeroForOne,
-        amountIn: swapParams.amount,
-        amountOutMinimum: swapParams.amountOutMinimum!,
+        amountIn: amountInWei,
+        amountOutMinimum: amountOutMinWei,
         hookData: swapParams.hookData,
       });
       commands = c;
@@ -119,7 +142,7 @@ export async function executeSwap(options: ExecuteSwapOptions): Promise<SwapResu
 
     // When input is native ETH (zeroForOne and tokenIn is ETH), send amountIn as value
     const value =
-      zeroForOne && swapParams.tokenIn?.toUpperCase() === 'ETH' ? BigInt(swapParams.amount) : 0n;
+      zeroForOne && tokenInUpper === 'ETH' ? BigInt(amountInWei) : 0n;
     const { request } = await publicClient.simulateContract({
       address: addresses.universalRouter as `0x${string}`,
       abi: UNIVERSAL_ROUTER_ABI,

@@ -17,7 +17,7 @@ export interface ForumTopic {
   id: string;
   title: string;
   agents: string[];
-  messages: { agent: string; message: string; type?: string; createdAt: string }[];
+  messages: { agent: string; message: string; type?: string; createdAt: string; metadata?: Record<string, unknown> }[];
   timestamp: Date;
   isActive: boolean;
   status?: string;
@@ -65,7 +65,6 @@ const ForumModal: React.FC<{
   topic: ForumTopic;
   onClose: () => void;
 }> = ({ topic, onClose }) => {
-  console.log(`[ForumModal] Rendering topic: ${topic.title} | proposals=${topic.proposals?.length ?? 0} | executions=${topic.executions?.length ?? 0}`, topic.proposals);
   return (
     <div 
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -178,9 +177,33 @@ const ForumModal: React.FC<{
                         </span>
                       )}
                     </div>
-                    <p className={`mt-1 leading-relaxed ${isResult ? 'text-amber-200' : 'text-slate-200'}`}>
-                      {msg.message}
-                    </p>
+                    {/* Special funding card for wallet address messages */}
+                    {isResult && msg.metadata?.walletAddress ? (
+                      <div className="mt-2 rounded-lg bg-amber-900/20 border border-amber-500/30 p-3 space-y-2">
+                        <p className="text-sm text-amber-200">
+                          Agent needs ETH to execute the transaction.
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-400">Wallet:</span>
+                          <code
+                            className="text-xs font-mono text-amber-300 bg-slate-800 px-2 py-1 rounded cursor-pointer hover:bg-slate-700 transition-colors"
+                            onClick={() => navigator.clipboard.writeText(String(msg.metadata!.walletAddress))}
+                            title="Click to copy"
+                          >
+                            {String(msg.metadata!.walletAddress)}
+                          </code>
+                        </div>
+                        <div className="flex items-center gap-3 text-xs">
+                          <span className="text-slate-400">Balance: <span className="text-red-400">{String(msg.metadata!.balance)} ETH</span></span>
+                          <span className="text-slate-400">Min required: <span className="text-amber-300">{String(msg.metadata!.requiredMin)} ETH</span></span>
+                        </div>
+                        <p className="text-[10px] text-slate-500">Click address to copy. Send ETH on Unichain Sepolia. Execution will auto-resume once funded.</p>
+                      </div>
+                    ) : (
+                      <p className={`mt-1 leading-relaxed ${isResult ? 'text-amber-200' : 'text-slate-200'}`}>
+                        {msg.message}
+                      </p>
+                    )}
                   </div>
                 </div>
               );
@@ -270,26 +293,63 @@ const ForumModal: React.FC<{
 
             {/* Executions */}
             {topic.executions && topic.executions.length > 0 && (
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 <h4 className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Execution</h4>
                 {topic.executions.map((exec) => {
+                  const walletAddr = (exec as any).wallet_address || exec.walletAddress;
+                  const isPending = exec.status === 'pending';
                   const execColor =
                     exec.status === 'success'
                       ? 'text-emerald-400'
                       : exec.status === 'failed'
                         ? 'text-red-400'
                         : 'text-indigo-400';
+
                   return (
-                    <div key={exec.id} className="flex items-center justify-between text-xs rounded bg-slate-700/30 px-2.5 py-1.5 border border-slate-600/30">
-                      <div className="flex items-center gap-2">
-                        <span className={`uppercase font-medium ${execColor}`}>{exec.status}</span>
-                        <span className="text-slate-400">{exec.agentEns}</span>
+                    <div key={exec.id} className="space-y-2">
+                      <div className="flex items-center justify-between text-xs rounded bg-slate-700/30 px-2.5 py-1.5 border border-slate-600/30">
+                        <div className="flex items-center gap-2">
+                          <span className={`uppercase font-medium ${execColor}`}>{exec.status}</span>
+                          <span className="text-slate-400">{(exec as any).agent_ens || exec.agentEns}</span>
+                        </div>
+                        {exec.txHash || (exec as any).tx_hash ? (() => {
+                          const hash = (exec as any).tx_hash || exec.txHash || '';
+                          return (
+                            <a
+                              href={`https://sepolia.uniscan.xyz/tx/${hash}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-400 hover:text-blue-300 font-mono transition-colors"
+                            >
+                              {hash.slice(0, 10)}...
+                            </a>
+                          );
+                        })() : (exec as any).error_message || exec.error ? (
+                          <span className="text-red-400 truncate max-w-[150px]">{(exec as any).error_message || exec.error}</span>
+                        ) : null}
                       </div>
-                      {exec.txHash ? (
-                        <span className="text-slate-500 font-mono">{exec.txHash.slice(0, 10)}...</span>
-                      ) : exec.error ? (
-                        <span className="text-red-400 truncate max-w-[150px]">{exec.error}</span>
-                      ) : null}
+
+                      {/* Funding box for pending executions */}
+                      {isPending && walletAddr && (
+                        <div className="rounded-lg bg-amber-900/20 border border-amber-500/30 p-3 space-y-2">
+                          <p className="text-sm font-medium text-amber-200">
+                            Fund agent wallet to execute
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-slate-400">Send ETH to:</span>
+                            <code
+                              className="text-xs font-mono text-amber-300 bg-slate-800 px-2 py-1 rounded cursor-pointer hover:bg-slate-700 transition-colors select-all"
+                              onClick={() => navigator.clipboard.writeText(walletAddr)}
+                              title="Click to copy"
+                            >
+                              {walletAddr}
+                            </code>
+                          </div>
+                          <p className="text-[10px] text-slate-500">
+                            Send at least 0.02 ETH on Unichain Sepolia. Execution will auto-resume once funded.
+                          </p>
+                        </div>
+                      )}
                     </div>
                   );
                 })}

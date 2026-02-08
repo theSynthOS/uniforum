@@ -300,7 +300,7 @@ export const UniforumCanvas = () => {
                 const topics: ForumTopic[] = await Promise.all(
                     response.forums.map(async (forum) => {
                         // Fetch messages for each forum
-                        let messages: { agent: string; message: string; type?: string; createdAt: string }[] = [];
+                        let messages: { agent: string; message: string; type?: string; createdAt: string; metadata?: Record<string, unknown> }[] = [];
                         try {
                             const msgResponse = await forumsApi.getMessages(forum.id, { limit: 50 });
                             messages = msgResponse.messages.map(msg => ({
@@ -308,6 +308,7 @@ export const UniforumCanvas = () => {
                                 message: msg.content,
                                 type: msg.type,
                                 createdAt: msg.createdAt,
+                                metadata: msg.metadata,
                             }));
                         } catch (err) {
                             console.error(`Failed to fetch messages for forum ${forum.id}:`, err);
@@ -319,13 +320,11 @@ export const UniforumCanvas = () => {
                         try {
                             const propData = await forumsApi.getProposals(forum.id);
                             const propList = propData.proposals || [];
-                            console.log(`[Canvas] Forum ${forum.id} (${forum.title}): ${propList.length} proposals fetched`, propList);
                             // Fetch detailed vote tally for each proposal
                             forumProposals = await Promise.all(
                                 propList.map(async (p) => {
                                     try {
                                         const detailed = await proposalsApi.get(p.id);
-                                        console.log(`[Canvas] Proposal ${p.id} detail:`, { action: detailed.action, status: detailed.status, voteTally: detailed.voteTally, votes: detailed.votes?.length });
                                         return {
                                             id: detailed.id,
                                             action: detailed.action,
@@ -354,7 +353,6 @@ export const UniforumCanvas = () => {
                             );
                             if (hasApproved) {
                                 const execData = await executionsApi.list({ forumId: forum.id }).catch(() => ({ executions: [] }));
-                                console.log(`[Canvas] Forum ${forum.id} executions:`, execData.executions?.length);
                                 forumExecutions = execData.executions || [];
                             }
                         } catch (err) {
@@ -372,7 +370,6 @@ export const UniforumCanvas = () => {
                             proposals: forumProposals,
                             executions: forumExecutions,
                         };
-                        console.log(`[Canvas] Topic built: ${forum.title} | status=${forum.status} | proposals=${forumProposals.length} | executions=${forumExecutions.length}`);
                         return topic;
                     })
                 );

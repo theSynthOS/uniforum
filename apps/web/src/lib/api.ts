@@ -337,6 +337,7 @@ export interface Execution {
   txHash?: string;
   error?: string;
   gasUsed?: string;
+  walletAddress?: string;
   createdAt: string;
   completedAt?: string;
 }

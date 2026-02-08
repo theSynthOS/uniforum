@@ -58,8 +58,34 @@ executionsRoutes.get('/', async (c) => {
     return c.json({ error: 'Failed to fetch executions' }, 500);
   }
 
+  // Resolve wallet addresses for pending executions
+  const executions = data || [];
+  const agentEnsNames = [...new Set(executions.map((e) => e.agent_ens).filter(Boolean))];
+  const walletMap = new Map<string, string>();
+  for (const ens of agentEnsNames) {
+    const { subdomain } = normalizeEnsInput(ens);
+    const { data: agent } = await supabase
+      .from('agents')
+      .select('id')
+      .eq('ens_name', subdomain)
+      .single();
+    if (agent) {
+      const { data: wallet } = await supabase
+        .from('agent_wallets')
+        .select('wallet_address')
+        .eq('agent_id', agent.id)
+        .single();
+      if (wallet?.wallet_address) {
+        walletMap.set(ens, wallet.wallet_address);
+      }
+    }
+  }
+
   return c.json({
-    executions: data || [],
+    executions: executions.map((e) => ({
+      ...e,
+      wallet_address: walletMap.get(e.agent_ens) || null,
+    })),
     pagination: {
       limit: limitNum,
       offset: offsetNum,
