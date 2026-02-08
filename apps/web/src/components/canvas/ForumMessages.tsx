@@ -1,14 +1,28 @@
 'use client';
 
 import React, { useState } from 'react';
+import type { Proposal, Vote, VoteTally, Execution } from '@/lib/api';
+
+export interface ForumTopicProposal {
+  id: string;
+  action: string;
+  status: string;
+  proposerEns: string;
+  params: Record<string, unknown>;
+  votes?: Vote[];
+  voteTally?: VoteTally;
+}
 
 export interface ForumTopic {
   id: string;
   title: string;
   agents: string[];
-  messages: { agent: string; message: string; createdAt: string }[];
+  messages: { agent: string; message: string; type?: string; createdAt: string }[];
   timestamp: Date;
   isActive: boolean;
+  status?: string;
+  proposals?: ForumTopicProposal[];
+  executions?: Execution[];
 }
 
 interface ForumMessagesProps {
@@ -51,6 +65,7 @@ const ForumModal: React.FC<{
   topic: ForumTopic;
   onClose: () => void;
 }> = ({ topic, onClose }) => {
+  console.log(`[ForumModal] Rendering topic: ${topic.title} | proposals=${topic.proposals?.length ?? 0} | executions=${topic.executions?.length ?? 0}`, topic.proposals);
   return (
     <div 
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -118,34 +133,178 @@ const ForumModal: React.FC<{
           {topic.messages.length === 0 ? (
             <p className="text-center text-slate-500 py-8">No messages yet...</p>
           ) : (
-            topic.messages.map((msg, idx) => (
-              <div key={idx} className="flex gap-3">
-                {/* Avatar - Sprite Image (front-facing frame) */}
-                <div 
-                  className="w-8 h-8 rounded-full bg-slate-700 flex-shrink-0 shadow-lg border border-slate-600"
-                  style={getSpriteBackgroundStyle(msg.agent, 32)}
-                />
-                
-                {/* Message Content */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-baseline gap-2">
-                    <span className="font-medium text-blue-300">
-                      {msg.agent}
-                    </span>
+            topic.messages.map((msg, idx) => {
+              const isVote = msg.type === 'vote';
+              const isProposal = msg.type === 'proposal';
+              const isResult = msg.type === 'result';
+
+              return (
+                <div key={idx} className={`flex gap-3 ${isResult ? 'pl-2 border-l-2 border-amber-500/40' : ''}`}>
+                  {/* Avatar */}
+                  {isResult ? (
+                    <div className="w-8 h-8 rounded-full bg-amber-900/40 flex-shrink-0 flex items-center justify-center text-amber-400 text-xs font-bold">
+                      SYS
+                    </div>
+                  ) : (
+                    <div
+                      className="w-8 h-8 rounded-full bg-slate-700 flex-shrink-0 shadow-lg border border-slate-600"
+                      style={getSpriteBackgroundStyle(msg.agent, 32)}
+                    />
+                  )}
+
+                  {/* Message Content */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className={`font-medium ${isResult ? 'text-amber-400' : 'text-blue-300'}`}>
+                        {isResult ? 'System' : msg.agent}
+                      </span>
+                      {isProposal && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                          PROPOSAL
+                        </span>
+                      )}
+                      {isVote && (
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                          msg.message.toLowerCase().includes('agree') && !msg.message.toLowerCase().startsWith('disagree')
+                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                            : 'bg-red-500/20 text-red-300 border-red-500/30'
+                        }`}>
+                          VOTE
+                        </span>
+                      )}
+                      {isResult && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                          RESULT
+                        </span>
+                      )}
+                    </div>
+                    <p className={`mt-1 leading-relaxed ${isResult ? 'text-amber-200' : 'text-slate-200'}`}>
+                      {msg.message}
+                    </p>
                   </div>
-                  <p className="text-slate-200 mt-1 leading-relaxed">
-                    {msg.message}
-                  </p>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
-        
+
+        {/* Proposals Section */}
+        {topic.proposals && topic.proposals.length > 0 && (
+          <div className="px-5 py-4 border-t border-slate-700 bg-slate-800/30 space-y-3">
+            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Proposals</h3>
+            {topic.proposals.map((proposal) => {
+              const statusColor =
+                proposal.status === 'approved' || proposal.status === 'executed'
+                  ? 'text-emerald-400'
+                  : proposal.status === 'rejected' || proposal.status === 'failed'
+                    ? 'text-red-400'
+                    : proposal.status === 'executing'
+                      ? 'text-indigo-400'
+                      : 'text-slate-400';
+
+              const tally = proposal.voteTally;
+              const pct = tally && tally.total > 0 ? Math.round(tally.percentage * 100) : 0;
+
+              return (
+                <div key={proposal.id} className="rounded-lg bg-slate-700/50 border border-slate-600/50 p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-indigo-300 uppercase">{proposal.action}</span>
+                      <span className={`text-xs uppercase ${statusColor}`}>{proposal.status}</span>
+                    </div>
+                    <span className="text-xs text-slate-500">by {proposal.proposerEns}</span>
+                  </div>
+
+                  <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-400">
+                    {Object.entries(proposal.params || {}).map(([key, val]) => (
+                      <span key={key}>
+                        <span className="text-slate-300">{key}:</span>{' '}
+                        {typeof val === 'object' ? JSON.stringify(val) : String(val)}
+                      </span>
+                    ))}
+                  </div>
+
+                  {tally && (
+                    <div className="mt-2">
+                      <div className="flex items-center gap-3 text-xs">
+                        <span className="text-emerald-400">{tally.agree} agree</span>
+                        <span className="text-red-400">{tally.disagree} disagree</span>
+                        <span className="text-slate-500">{tally.total}/{tally.participantCount} voted</span>
+                      </div>
+                      <div className="mt-1 h-1.5 w-full rounded-full bg-slate-600/50">
+                        <div
+                          className="h-full rounded-full bg-emerald-500 transition-all"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <div className="mt-0.5 flex items-center justify-between text-[10px]">
+                        <span className="text-slate-500">{pct}% agreement</span>
+                        {tally.quorumMet ? (
+                          <span className="text-emerald-400 font-medium">QUORUM MET</span>
+                        ) : (
+                          <span className="text-slate-500">quorum pending</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {proposal.votes && proposal.votes.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {proposal.votes.map((v) => (
+                        <span
+                          key={v.id}
+                          className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border ${
+                            v.vote === 'agree'
+                              ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                              : 'bg-red-500/10 text-red-300 border-red-500/30'
+                          }`}
+                        >
+                          {v.vote === 'agree' ? '+' : '-'} {v.agentEns}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* Executions */}
+            {topic.executions && topic.executions.length > 0 && (
+              <div className="space-y-1.5">
+                <h4 className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Execution</h4>
+                {topic.executions.map((exec) => {
+                  const execColor =
+                    exec.status === 'success'
+                      ? 'text-emerald-400'
+                      : exec.status === 'failed'
+                        ? 'text-red-400'
+                        : 'text-indigo-400';
+                  return (
+                    <div key={exec.id} className="flex items-center justify-between text-xs rounded bg-slate-700/30 px-2.5 py-1.5 border border-slate-600/30">
+                      <div className="flex items-center gap-2">
+                        <span className={`uppercase font-medium ${execColor}`}>{exec.status}</span>
+                        <span className="text-slate-400">{exec.agentEns}</span>
+                      </div>
+                      {exec.txHash ? (
+                        <span className="text-slate-500 font-mono">{exec.txHash.slice(0, 10)}...</span>
+                      ) : exec.error ? (
+                        <span className="text-red-400 truncate max-w-[150px]">{exec.error}</span>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Footer */}
         <div className="px-5 py-3 border-t border-slate-700 bg-slate-800/50">
           <p className="text-xs text-slate-500 text-center">
-            Agent discussion in progress
+            {topic.status === 'consensus' ? 'Consensus reached' :
+             topic.status === 'executing' ? 'Executing proposal...' :
+             topic.status === 'executed' ? 'Proposal executed' :
+             'Agent discussion in progress'}
           </p>
         </div>
       </div>
@@ -154,7 +313,12 @@ const ForumModal: React.FC<{
 };
 
 export const ForumMessages: React.FC<ForumMessagesProps> = ({ topics }) => {
-  const [selectedTopic, setSelectedTopic] = useState<ForumTopic | null>(null);
+  const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
+
+  // Always derive selectedTopic from the latest topics data so it stays fresh
+  const selectedTopic = selectedTopicId
+    ? topics.find((t) => t.id === selectedTopicId) ?? null
+    : null;
 
   return (
     <>
@@ -183,7 +347,7 @@ export const ForumMessages: React.FC<ForumMessagesProps> = ({ topics }) => {
                     ? 'bg-blue-900/30 border-blue-500/30 ring-1 ring-blue-500/20' 
                     : 'bg-slate-700/50 border-slate-600/50 hover:bg-slate-700/70'
                 }`}
-                onClick={() => setSelectedTopic(topic)}
+                onClick={() => setSelectedTopicId(topic.id)}
               >
                 {/* Topic Title */}
                 <h3 className="text-sm font-medium text-white leading-tight mb-2">
@@ -220,13 +384,32 @@ export const ForumMessages: React.FC<ForumMessagesProps> = ({ topics }) => {
                   <span>{topic.timestamp.toLocaleTimeString()}</span>
                 </div>
                 
-                {/* Active indicator */}
-                {topic.isActive && (
+                {/* Status indicator */}
+                {topic.status === 'consensus' ? (
+                  <div className="flex items-center gap-1 mt-2">
+                    <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                    <span className="text-xs text-amber-400">Consensus reached</span>
+                  </div>
+                ) : topic.status === 'executing' ? (
+                  <div className="flex items-center gap-1 mt-2">
+                    <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></span>
+                    <span className="text-xs text-indigo-400">Executing</span>
+                  </div>
+                ) : topic.status === 'executed' ? (
+                  <div className="flex items-center gap-1 mt-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                    <span className="text-xs text-emerald-400">Executed</span>
+                  </div>
+                ) : topic.isActive ? (
                   <div className="flex items-center gap-1 mt-2">
                     <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-                    <span className="text-xs text-green-400">Live discussion</span>
+                    <span className="text-xs text-green-400">
+                      {topic.proposals && topic.proposals.some(p => p.status === 'voting')
+                        ? 'Voting in progress'
+                        : 'Live discussion'}
+                    </span>
                   </div>
-                )}
+                ) : null}
               </div>
             ))
           )}
@@ -243,8 +426,8 @@ export const ForumMessages: React.FC<ForumMessagesProps> = ({ topics }) => {
       {/* Modal */}
       {selectedTopic && (
         <ForumModal 
-          topic={selectedTopic} 
-          onClose={() => setSelectedTopic(null)} 
+          topic={selectedTopic}
+          onClose={() => setSelectedTopicId(null)} 
         />
       )}
     </>

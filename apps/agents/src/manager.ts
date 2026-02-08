@@ -18,6 +18,7 @@ import {
   buildVoteEvaluationPrompt,
   evaluateProposalRules,
   executeForAgent,
+  checkConsensus,
 } from '@uniforum/forum';
 import { decryptPrivateKey, formatPrivateKey } from '@uniforum/contracts';
 import { createAgentCharacter, mergeUploadedCharacter } from './characters/template';
@@ -382,7 +383,10 @@ export class AgentManager {
           const proposal = payload.new as any;
           const oldProposal = payload.old as any;
 
+          console.log(`[agents] Realtime proposal UPDATE: id=${proposal.id} status=${proposal.status} oldStatus=${oldProposal?.status ?? 'unknown'}`);
+
           if (proposal.status === 'approved' && oldProposal?.status !== 'approved') {
+            console.log(`[agents] Realtime: proposal ${proposal.id} approved, triggering execution...`);
             await this.handleApprovedProposal(proposal);
           }
         }
@@ -713,6 +717,98 @@ export class AgentManager {
     if (saved) {
       console.log(`[agents] ${agent.ensName} voted ${vote} on proposal ${proposal.id}`);
     }
+
+    // Check if consensus has been reached after this vote
+    await this.checkAndResolveConsensus(proposal);
+  }
+
+  /**
+   * Check if consensus has been reached after an agent auto-vote.
+   * If so, update proposal and forum status to trigger execution.
+   */
+  private async checkAndResolveConsensus(proposal: any): Promise<void> {
+    const proposalId = proposal.id;
+    const forumId = proposal.forum_id;
+
+    // Fetch all votes for this proposal
+    const { data: allVotes, error: votesError } = await this.supabase
+      .from('votes')
+      .select('vote')
+      .eq('proposal_id', proposalId);
+
+    if (votesError || !allVotes) {
+      console.error('[agents] Failed to fetch votes for consensus check:', votesError);
+      return;
+    }
+
+    const agreeCount = allVotes.filter((v) => v.vote === 'agree').length;
+    const disagreeCount = allVotes.filter((v) => v.vote === 'disagree').length;
+
+    // Fetch forum quorum threshold
+    const { data: forum } = await this.supabase
+      .from('forums')
+      .select('quorum_threshold, min_participants, timeout_minutes')
+      .eq('id', forumId)
+      .single();
+
+    const quorumThreshold = forum?.quorum_threshold ?? 0.6;
+    const minParticipants = forum?.min_participants ?? 3;
+    const timeoutMinutes = forum?.timeout_minutes ?? 30;
+
+    const result = checkConsensus(agreeCount, disagreeCount, {
+      quorumThreshold,
+      minParticipants,
+      timeoutMinutes,
+    });
+
+    if (!result.reached) return;
+
+    const totalVotes = agreeCount + disagreeCount;
+
+    if (result.result === 'approved') {
+      await this.supabase
+        .from('proposals')
+        .update({ status: 'approved', resolved_at: new Date().toISOString() })
+        .eq('id', proposalId)
+        .eq('status', 'voting');
+
+      await this.supabase
+        .from('forums')
+        .update({ status: 'consensus' })
+        .eq('id', forumId);
+
+      await this.insertForumMessage({
+        forum_id: forumId,
+        agent_id: null as any,
+        content: `Consensus reached! ${agreeCount}/${totalVotes} agents agreed (${Math.round((agreeCount / totalVotes) * 100)}%)`,
+        type: 'result',
+      });
+
+      console.log(`[agents] Consensus reached on proposal ${proposalId}: ${agreeCount}/${totalVotes} agreed`);
+
+      // Directly trigger execution instead of relying on Supabase Realtime
+      // (Realtime UPDATE may not include old status without REPLICA IDENTITY FULL)
+      console.log(`[agents] Triggering execution for approved proposal ${proposalId}...`);
+      const approvedProposal = { ...proposal, status: 'approved', resolved_at: new Date().toISOString() };
+      this.handleApprovedProposal(approvedProposal).catch((err) => {
+        console.error(`[agents] Direct execution trigger failed for proposal ${proposalId}:`, err);
+      });
+    } else if (result.result === 'rejected') {
+      await this.supabase
+        .from('proposals')
+        .update({ status: 'rejected', resolved_at: new Date().toISOString() })
+        .eq('id', proposalId)
+        .eq('status', 'voting');
+
+      await this.insertForumMessage({
+        forum_id: forumId,
+        agent_id: null as any,
+        content: `Proposal rejected. ${disagreeCount}/${totalVotes} agents disagreed — consensus is not possible.`,
+        type: 'result',
+      });
+
+      console.log(`[agents] Proposal ${proposalId} rejected: consensus impossible`);
+    }
   }
 
   private async handleDebateFollowUp(
@@ -854,7 +950,7 @@ export class AgentManager {
     if (!proposalPayload) return;
 
     const { action, params, hooks, description } = proposalPayload;
-    const allowedActions = new Set(['swap', 'addLiquidity', 'removeLiquidity', 'limitOrder']);
+    const allowedActions = new Set(['swap', 'limitOrder']);
     if (!action || !allowedActions.has(action)) return;
     if (!params || typeof params !== 'object') return;
 
@@ -862,12 +958,15 @@ export class AgentManager {
       .from('proposals')
       .insert({
         forum_id: forum.id,
-        proposer_ens: agent.ensName,
+        creator_agent_id: agent.id,
         action,
         params,
         hooks: hooks || null,
         description: description || null,
         status: 'voting',
+        expires_at: new Date(
+          Date.now() + (forum.timeout_minutes ?? 30) * 60 * 1000
+        ).toISOString(),
       })
       .select()
       .single();
@@ -895,39 +994,60 @@ export class AgentManager {
     const proposalId = proposal?.id;
     if (!proposalId) return;
 
-    if (this.executingProposals.has(proposalId)) return;
+    console.log(`[agents] handleApprovedProposal called for proposal ${proposalId} (status: ${proposal.status})`);
+
+    if (this.executingProposals.has(proposalId)) {
+      console.log(`[agents] Proposal ${proposalId} already being executed, skipping`);
+      return;
+    }
     this.executingProposals.add(proposalId);
 
     try {
+      // Step 1: Resolve who should execute (forum creator)
       const executorEns = await this.resolveExecutorEns(proposal);
       if (!executorEns) {
         console.warn(`[agents] Proposal ${proposalId} missing executor ENS, skipping execution`);
         return;
       }
+      console.log(`[agents] Resolved executor for proposal ${proposalId}: ${executorEns}`);
 
+      // Step 2: Acquire execution lock (proposal status → executing)
       const lockAcquired = await this.acquireExecutionLock(proposalId, proposal.status);
+      console.log(`[agents] Execution lock for proposal ${proposalId}: ${lockAcquired ? 'acquired' : 'not acquired'}`);
       if (!lockAcquired) {
         const pending = await this.getPendingExecution(proposalId, executorEns);
         if (!pending) {
           const anyExecution = await this.hasAnyExecutionRecord(proposalId);
           if (anyExecution) {
+            console.log(`[agents] Proposal ${proposalId} already has execution records, skipping`);
             return;
           }
         }
       }
 
+      // Step 3: Verify executor is managed by this agent service
       const executorAgent = this.getManagedAgentByEns(executorEns);
       if (!executorAgent) {
         console.log(
           `[agents] Executor ${executorEns} not managed by this service; skipping proposal ${proposalId}`
         );
+        console.log(`[agents] Managed agents: ${Array.from(this.agents.keys()).join(', ')}`);
         return;
       }
+      console.log(`[agents] Found managed executor agent: ${executorAgent.ensName} (id: ${executorAgent.id})`);
 
+      // Step 4: Create execution record
       const executionRecord = await this.ensureExecutionRecord(proposal, executorEns);
-      if (!executionRecord) return;
+      if (!executionRecord) {
+        console.warn(`[agents] Failed to create execution record for proposal ${proposalId}`);
+        return;
+      }
+      console.log(`[agents] Execution record created: ${executionRecord.id}`);
 
+      // Step 5: Fetch execution payload (call data) from API
+      console.log(`[agents] Fetching execution payload for proposal ${proposalId}...`);
       const payload = await this.fetchExecutionPayload(proposalId);
+      console.log(`[agents] Execution payload fetched: action=${payload.action}, chainId=${payload.chainId}, executor=${payload.executorEnsName}`);
 
       if (
         payload.executorEnsName &&
@@ -935,11 +1055,12 @@ export class AgentManager {
         payload.executorEnsName !== this.normalizeEnsName(executorEns)
       ) {
         console.warn(
-          `[agents] Payload executor mismatch for proposal ${proposalId}: ${payload.executorEnsName}`
+          `[agents] Payload executor mismatch for proposal ${proposalId}: expected ${executorEns}, got ${payload.executorEnsName}`
         );
         return;
       }
 
+      // Step 6: Get executor's private key for signing
       const privateKey = await this.getAgentPrivateKey(executorAgent.id);
       if (!privateKey) {
         console.warn(`[agents] Missing private key for ${executorEns}`);
@@ -949,7 +1070,10 @@ export class AgentManager {
         }, payload.chainId);
         return;
       }
+      console.log(`[agents] Private key retrieved for ${executorEns}`);
 
+      // Step 7: Execute the transaction
+      console.log(`[agents] Executing ${payload.action} for proposal ${proposalId} as ${executorEns} on chain ${payload.chainId}...`);
       const executionProposal = this.buildProposalFromPayload(payload);
       const result = await executeForAgent({
         proposal: executionProposal,
@@ -957,10 +1081,13 @@ export class AgentManager {
         agentPrivateKey: privateKey,
         chainId: payload.chainId,
       });
+      console.log(`[agents] Execution result for proposal ${proposalId}: status=${result.status}, txHash=${result.txHash || 'none'}, error=${result.error || 'none'}`);
 
+      // Step 8: Report result back to API
       await this.reportExecutionResult(executionRecord.id, result, payload.chainId);
+      console.log(`[agents] Execution result reported for proposal ${proposalId}`);
     } catch (error) {
-      console.error('[agents] Execution worker error:', error);
+      console.error(`[agents] Execution error for proposal ${proposalId}:`, error);
     } finally {
       this.executingProposals.delete(proposalId);
     }
@@ -1013,9 +1140,7 @@ export class AgentManager {
   }
 
   private async resolveExecutorEns(proposal: any): Promise<string | null> {
-    if (proposal.creator_agent_ens) return this.normalizeEnsName(proposal.creator_agent_ens);
-    if (proposal.proposer_ens) return this.normalizeEnsName(proposal.proposer_ens);
-
+    // Resolve from creator_agent_id (the actual DB column)
     if (proposal.creator_agent_id) {
       const { data: agent } = await this.supabase
         .from('agents')
@@ -1283,7 +1408,7 @@ export class AgentManager {
       id: proposal.id,
       forumId: proposal.forum_id,
       creatorAgentId: proposal.creator_agent_id,
-      creatorEnsName: proposal.creator_agent_ens || proposal.proposer_ens || '',
+      creatorEnsName: proposal.creator_agent_ens || '',
       description: proposal.description ?? undefined,
       action: proposal.action,
       params: proposal.params,

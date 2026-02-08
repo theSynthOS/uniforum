@@ -4,7 +4,14 @@ import React, { useEffect, useRef, useState } from 'react';
 import { CanvasManager } from './core/CanvasManager';
 import { Agent } from './core/types';
 import { ForumMessages, ForumTopic } from './ForumMessages';
-import { agents as agentsApi, Agent as ApiAgent, forums as forumsApi } from '@/lib/api';
+import {
+    agents as agentsApi,
+    Agent as ApiAgent,
+    forums as forumsApi,
+    proposals as proposalsApi,
+    executions as executionsApi,
+    Forum,
+} from '@/lib/api';
 
 import { getRandomWalkablePosition, findPath, getNearestWalkablePosition } from './assets/mapData';
 
@@ -287,32 +294,86 @@ export const UniforumCanvas = () => {
         const fetchForums = async () => {
             try {
                 setIsLoadingForums(true);
-                const response = await forumsApi.list({ limit: 20, status: 'active' });
-                
+                const response = await forumsApi.list({ limit: 20 });
+
                 // Convert API forums to ForumTopic format
                 const topics: ForumTopic[] = await Promise.all(
                     response.forums.map(async (forum) => {
                         // Fetch messages for each forum
-                        let messages: { agent: string; message: string; createdAt: string }[] = [];
+                        let messages: { agent: string; message: string; type?: string; createdAt: string }[] = [];
                         try {
                             const msgResponse = await forumsApi.getMessages(forum.id, { limit: 50 });
                             messages = msgResponse.messages.map(msg => ({
                                 agent: msg.agentEns,
                                 message: msg.content,
-                                createdAt: msg.createdAt
+                                type: msg.type,
+                                createdAt: msg.createdAt,
                             }));
                         } catch (err) {
                             console.error(`Failed to fetch messages for forum ${forum.id}:`, err);
                         }
-                        
-                        return {
+
+                        // Fetch proposals with vote details
+                        let forumProposals: ForumTopic['proposals'] = [];
+                        let forumExecutions: ForumTopic['executions'] = [];
+                        try {
+                            const propData = await forumsApi.getProposals(forum.id);
+                            const propList = propData.proposals || [];
+                            console.log(`[Canvas] Forum ${forum.id} (${forum.title}): ${propList.length} proposals fetched`, propList);
+                            // Fetch detailed vote tally for each proposal
+                            forumProposals = await Promise.all(
+                                propList.map(async (p) => {
+                                    try {
+                                        const detailed = await proposalsApi.get(p.id);
+                                        console.log(`[Canvas] Proposal ${p.id} detail:`, { action: detailed.action, status: detailed.status, voteTally: detailed.voteTally, votes: detailed.votes?.length });
+                                        return {
+                                            id: detailed.id,
+                                            action: detailed.action,
+                                            status: detailed.status,
+                                            proposerEns: detailed.proposerEns,
+                                            params: detailed.params,
+                                            votes: detailed.votes,
+                                            voteTally: detailed.voteTally,
+                                        };
+                                    } catch (err) {
+                                        console.warn(`[Canvas] Failed to fetch proposal detail ${p.id}:`, err);
+                                        return {
+                                            id: p.id,
+                                            action: p.action,
+                                            status: p.status,
+                                            proposerEns: p.proposerEns,
+                                            params: p.params,
+                                        };
+                                    }
+                                })
+                            );
+
+                            // Fetch executions if any proposal is approved+
+                            const hasApproved = propList.some((p) =>
+                                ['approved', 'executing', 'executed'].includes(p.status)
+                            );
+                            if (hasApproved) {
+                                const execData = await executionsApi.list({ forumId: forum.id }).catch(() => ({ executions: [] }));
+                                console.log(`[Canvas] Forum ${forum.id} executions:`, execData.executions?.length);
+                                forumExecutions = execData.executions || [];
+                            }
+                        } catch (err) {
+                            console.warn(`[Canvas] Failed to fetch proposals for forum ${forum.id}:`, err);
+                        }
+
+                        const topic = {
                             id: forum.id,
                             title: forum.title,
                             agents: forum.participants,
                             messages,
                             timestamp: new Date(forum.createdAt),
-                            isActive: forum.status === 'active'
+                            isActive: forum.status === 'active',
+                            status: forum.status,
+                            proposals: forumProposals,
+                            executions: forumExecutions,
                         };
+                        console.log(`[Canvas] Topic built: ${forum.title} | status=${forum.status} | proposals=${forumProposals.length} | executions=${forumExecutions.length}`);
+                        return topic;
                     })
                 );
                 

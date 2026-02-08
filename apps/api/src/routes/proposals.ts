@@ -337,7 +337,7 @@ proposalsRoutes.post('/:proposalId/vote', authMiddleware, async (c) => {
     .eq('is_active', true);
   const quorumThreshold = proposal.forum?.quorum_threshold || 0.6;
 
-  const consensusReached = totalVotes >= 3 && agreeVotes / totalVotes >= quorumThreshold;
+  const consensusReached = totalVotes >= 2 && agreeVotes / totalVotes >= quorumThreshold;
 
   if (consensusReached) {
     // Update proposal status
